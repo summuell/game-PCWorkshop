@@ -1,9 +1,19 @@
 package com.gamedraft.preview
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,18 +35,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -60,9 +81,11 @@ private val DarkInk = Color(0xFF302012)
 private val GameFont = staticCompositionLocalOf<FontFamily> { FontFamily.SansSerif }
 
 private val AssemblySaver = listSaver<ComputerAssembly, String>(
-    save = { assembly -> assembly.inventory.map { it.name } },
-    restore = { names -> ComputerAssembly(names.map(ComputerPart::valueOf)) },
+    save = { it.save() },
+    restore = ComputerAssembly::restore,
 )
+
+private data class InventoryDrag(val part: ComputerPart, val position: Offset)
 
 @Composable
 fun WorkshopGame() {
@@ -120,82 +143,207 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     val artwork = loadWorkbenchArtwork()
     var assembly by rememberSaveable(stateSaver = AssemblySaver) { mutableStateOf(ComputerAssembly()) }
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
+    var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
+    var holdingPart by remember { mutableStateOf<ComputerPart?>(null) }
+    var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var viewport by remember { mutableStateOf<Rect?>(null) }
+    var screenOrigin by remember { mutableStateOf(Offset.Zero) }
     val selection = selectedName?.let(ComputerPart::valueOf)
+    val currentDrag = draggedPart
+    val overPlacementGuide = currentDrag != null && assembly.canInstall(currentDrag.part) &&
+        isOverPlacementGuide(currentDrag.part, viewport, currentDrag.position)
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().height(52.dp).background(Panel).padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            GameText("维修工作台", fontSize = 20, modifier = Modifier.semantics { heading() })
-            GameButton("主页", onHome)
+    fun selectPart(part: ComputerPart) {
+        selectedName = part.name
+        feedback = null
+    }
+
+    fun changeHold(part: ComputerPart, pressed: Boolean) {
+        if (pressed && draggedPart == null) {
+            selectPart(part)
+            holdingPart = part.takeIf(assembly::canRemove)
+        } else if (holdingPart == part) {
+            holdingPart = null
         }
-        if (artwork.ready) {
-            WorkbenchScene(
-                artwork = artwork,
-                assembly = assembly,
-                selectedPart = selection,
-                onSelect = { selectedName = it.name },
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
-            PartControls(
-                assembly = assembly,
-                selection = selection,
-                onSelect = { selectedName = it.name },
-                onToggle = {
-                    if (selectedName == it.name) {
-                        assembly = assembly.toggle(it)
-                        selectedName = null
-                    }
-                },
-            )
-            Inventory(
-                artwork = artwork,
-                parts = assembly.inventory,
-                selection = selection,
-                onSelect = { selectedName = it.name },
-            )
+    }
+
+    fun finishHold(part: ComputerPart) {
+        if (draggedPart != null) return
+        holdingPart = null
+        if (assembly.canRemove(part)) {
+            assembly = assembly.remove(part)
+            selectedName = null
+            feedback = "${part.label}已放入物品栏"
         } else {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                GameText("正在载入工作台", color = MutedText)
+            selectPart(part)
+        }
+    }
+
+    fun moveInventoryPart(part: ComputerPart, position: Offset) {
+        val active = draggedPart
+        if (assembly.isInstalled(part) || (active != null && active.part != part)) return
+        if (active == null) selectPart(part)
+        draggedPart = InventoryDrag(part, position)
+    }
+
+    fun finishInventoryDrag(part: ComputerPart, released: Boolean) {
+        val active = draggedPart?.takeIf { it.part == part } ?: return
+        draggedPart = null
+        if (!released) return
+        val blocker = assembly.blockerFor(part)
+        when {
+            blocker != null -> feedback = blocker.instruction
+            !isOverPlacementGuide(part, viewport, active.position) -> feedback = "拖到提示框内再松手"
+            assembly.canInstall(part) -> {
+                assembly = assembly.install(part)
+                selectedName = null
+                feedback = "${part.label}已装回"
+            }
+        }
+    }
+
+    Box(
+        Modifier.fillMaxSize().onGloballyPositioned { screenOrigin = it.positionInRoot() },
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier.fillMaxWidth().height(52.dp).background(Panel).padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GameText("维修工作台", fontSize = 20, modifier = Modifier.semantics { heading() })
+                GameButton("主页", onHome)
+            }
+            if (artwork.ready) {
+                WorkbenchScene(
+                    artwork = artwork,
+                    assembly = assembly,
+                    selectedPart = selection,
+                    screwdriverSelected = screwdriverSelected,
+                    overPlacementGuide = overPlacementGuide,
+                    onViewportChanged = { viewport = it },
+                    onSelect = ::selectPart,
+                    onHoldChanged = ::changeHold,
+                    onRemove = ::finishHold,
+                    onUnscrew = { part, screw ->
+                        if (screwdriverSelected && draggedPart == null) {
+                            assembly = assembly.unscrew(part, screw)
+                            selectPart(part)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+                ToolStrip(
+                    artwork = artwork,
+                    screwdriverSelected = screwdriverSelected,
+                    selection = selection,
+                    hint = feedback ?: workbenchHint(assembly, selection, screwdriverSelected, holdingPart),
+                    holding = holdingPart != null,
+                    onScrewdriver = {
+                        screwdriverSelected = !screwdriverSelected
+                        selectedName = null
+                        feedback = null
+                    },
+                )
+                Inventory(
+                    artwork = artwork,
+                    parts = assembly.inventory,
+                    selection = selection,
+                    onSelect = ::selectPart,
+                    onMove = ::moveInventoryPart,
+                    onFinish = ::finishInventoryDrag,
+                )
+            } else {
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    GameText("正在载入工作台", color = MutedText)
+                }
+            }
+        }
+        if (currentDrag != null) {
+            Canvas(Modifier.matchParentSize()) {
+                drawPartPreview(
+                    artwork,
+                    currentDrag.part,
+                    currentDrag.position - screenOrigin,
+                    Size(95.dp.toPx(), 76.dp.toPx()),
+                )
             }
         }
     }
 }
 
-@Composable
-private fun PartControls(
+private fun workbenchHint(
     assembly: ComputerAssembly,
     selection: ComputerPart?,
-    onSelect: (ComputerPart) -> Unit,
-    onToggle: (ComputerPart) -> Unit,
+    screwdriverSelected: Boolean,
+    holdingPart: ComputerPart?,
+): String {
+    if (holdingPart != null) return "继续按住，取下零件"
+    if (selection == null) {
+        return when {
+            screwdriverSelected -> "点按高亮的螺丝"
+            assembly.isInstalled(ComputerPart.SidePanel) -> "选中螺丝刀，再点盖板螺丝"
+            else -> "长按零件拆下，从物品栏拖回"
+        }
+    }
+    assembly.blockerFor(selection)?.let { return it.instruction }
+    if (!assembly.isInstalled(selection)) return "拖到提示框内松手"
+    val screws = assembly.screwsRemaining(selection)
+    return if (screws > 0) {
+        if (screwdriverSelected) "还剩 $screws 颗螺丝" else "用螺丝刀拆下 $screws 颗螺丝"
+    } else {
+        "长按零件拆下"
+    }
+}
+
+@Composable
+private fun ToolStrip(
+    artwork: WorkbenchArtwork,
+    screwdriverSelected: Boolean,
+    selection: ComputerPart?,
+    hint: String,
+    holding: Boolean,
+    onScrewdriver: () -> Unit,
 ) {
-    val blocker = selection?.let(assembly::blockerFor)
+    val holdProgress by animateFloatAsState(
+        targetValue = if (holding) 1f else 0f,
+        animationSpec = if (holding) tween(PartHoldMillis, easing = LinearEasing) else snap(),
+    )
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 66.dp).background(Panel).padding(horizontal = 14.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().heightIn(min = 80.dp).background(Panel).padding(horizontal = 14.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            if (selection == null) {
-                val hint = if (assembly.isInstalled(ComputerPart.SidePanel)) {
-                    "点选机箱盖开始拆装"
-                } else {
-                    "点选零件拆卸或从物品栏装回"
-                }
-                GameText(hint, color = MutedText)
-            } else {
-                GameText(selection.label, fontSize = 18)
-                if (blocker != null) GameText(blocker.instruction, fontSize = 14, color = Amber)
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            GameText("工具栏", fontSize = 14, color = MutedText)
+            Row(
+                Modifier
+                    .height(43.dp)
+                    .background(if (screwdriverSelected) Color(0xFF302820) else SlotBackground)
+                    .border(if (screwdriverSelected) 2.dp else 1.dp, if (screwdriverSelected) Amber else Border)
+                    .semantics { selected = screwdriverSelected }
+                    .clickable(role = Role.Button, onClick = onScrewdriver)
+                    .padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ScrewdriverThumbnail(artwork, Modifier.size(width = 29.dp, height = 32.dp))
+                GameText("螺丝刀", fontSize = 14, color = if (screwdriverSelected) Amber else TextColor)
             }
         }
-        if (selection != null) {
-            if (blocker != null) {
-                GameButton("定位", onClick = { onSelect(blocker.part) })
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (selection != null) {
+                GameText(selection.label, fontSize = 16)
             } else {
-                val action = if (assembly.isInstalled(selection)) "拆卸" else "装回"
-                GameButton(action, onClick = { onToggle(selection) }, primary = true)
+                Spacer(Modifier.height(3.dp))
+            }
+            GameText(hint, fontSize = 14, color = if (holding) Amber else MutedText)
+            Box(Modifier.fillMaxWidth().height(3.dp)) {
+                if (holding) {
+                    Box(Modifier.fillMaxSize().background(SlotBackground))
+                    Box(Modifier.fillMaxWidth(holdProgress).height(3.dp).background(Amber))
+                }
             }
         }
     }
@@ -207,6 +355,8 @@ private fun Inventory(
     parts: List<ComputerPart>,
     selection: ComputerPart?,
     onSelect: (ComputerPart) -> Unit,
+    onMove: (ComputerPart, Offset) -> Unit,
+    onFinish: (ComputerPart, Boolean) -> Unit,
 ) {
     Column(
         Modifier.fillMaxWidth().background(Panel).padding(start = 14.dp, end = 14.dp, top = 5.dp, bottom = 12.dp),
@@ -230,25 +380,67 @@ private fun Inventory(
         } else {
             LazyRow(Modifier.fillMaxWidth().height(72.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 items(parts, key = { it.name }) { part ->
-                    val active = part == selection
-                    Column(
-                        Modifier
-                            .width(92.dp)
-                            .height(72.dp)
-                            .background(if (active) Color(0xFF302820) else SlotBackground)
-                            .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
-                            .clickable(role = Role.Button) { onSelect(part) }
-                            .padding(horizontal = 5.dp, vertical = 5.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        PartThumbnail(artwork, part, Modifier.size(width = 60.dp, height = 33.dp))
-                        Spacer(Modifier.height(5.dp))
-                        GameText(part.label, fontSize = 14)
-                    }
+                    InventorySlot(artwork, part, part == selection, onSelect, onMove, onFinish)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun InventorySlot(
+    artwork: WorkbenchArtwork,
+    part: ComputerPart,
+    active: Boolean,
+    onSelect: (ComputerPart) -> Unit,
+    onMove: (ComputerPart, Offset) -> Unit,
+    onFinish: (ComputerPart, Boolean) -> Unit,
+) {
+    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val currentMove by rememberUpdatedState(onMove)
+    val currentFinish by rememberUpdatedState(onFinish)
+    Column(
+        Modifier
+            .width(92.dp)
+            .height(72.dp)
+            .background(if (active) Color(0xFF302820) else SlotBackground)
+            .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
+            .onGloballyPositioned { coordinates = it }
+            .pointerInput(part) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // A sideways touch scrolls the inventory. Pulling upward starts placement.
+                    val start = if (down.type == PointerType.Mouse) {
+                        awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                    } else {
+                        awaitVerticalTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                    } ?: return@awaitEachGesture
+                    val layout = coordinates?.takeIf { it.isAttached } ?: return@awaitEachGesture
+
+                    var released = false
+                    try {
+                        currentMove(part, layout.localToRoot(start.position))
+                        released = drag(start.id) { change ->
+                            if (layout.isAttached) currentMove(part, layout.localToRoot(change.position))
+                            change.consume()
+                        }
+                        val release = currentEvent.changes.firstOrNull { it.id == start.id }
+                        if (released && release != null && layout.isAttached) {
+                            currentMove(part, layout.localToRoot(release.position))
+                        }
+                    } finally {
+                        currentFinish(part, released)
+                    }
+                }
+            }
+            .clickable(role = Role.Button) { onSelect(part) }
+            .padding(horizontal = 5.dp, vertical = 5.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        PartThumbnail(artwork, part, Modifier.size(width = 60.dp, height = 33.dp))
+        Spacer(Modifier.height(5.dp))
+        GameText(part.label, fontSize = 14)
     }
 }
 

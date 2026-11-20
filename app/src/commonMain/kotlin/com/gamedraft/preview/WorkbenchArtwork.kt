@@ -2,11 +2,17 @@ package com.gamedraft.preview
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -17,13 +23,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
 import com.gamedraft.preview.resources.Res
@@ -37,6 +53,7 @@ private const val ArtworkWidth = 1024
 private const val ArtworkHeight = 1536
 private const val WorkbenchTop = 106
 private const val WorkbenchHeight = 1386
+internal const val PartHoldMillis = 650
 
 internal data class WorkbenchArtwork(
     val emptyCase: ImageBitmap,
@@ -153,15 +170,49 @@ internal fun WorkbenchScene(
     artwork: WorkbenchArtwork,
     assembly: ComputerAssembly,
     selectedPart: ComputerPart?,
+    screwdriverSelected: Boolean,
+    overPlacementGuide: Boolean,
+    onViewportChanged: (Rect) -> Unit,
     onSelect: (ComputerPart) -> Unit,
+    onHoldChanged: (ComputerPart, Boolean) -> Unit,
+    onRemove: (ComputerPart) -> Unit,
+    onUnscrew: (ComputerPart, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val currentHoldChanged by rememberUpdatedState(onHoldChanged)
+    val currentRemove by rememberUpdatedState(onRemove)
+    val configuration = LocalViewConfiguration.current
+    val workbenchConfiguration = remember(configuration) {
+        object : ViewConfiguration by configuration {
+            override val longPressTimeoutMillis = PartHoldMillis.toLong()
+        }
+    }
+    val visibleParts = ComputerPart.entries.filter(assembly::isVisible)
+
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val aspectRatio = ArtworkWidth.toFloat() / WorkbenchHeight
         val sceneWidth = minOf(maxWidth, maxHeight * aspectRatio)
         val sceneHeight = sceneWidth / aspectRatio
 
-        Box(Modifier.size(sceneWidth, sceneHeight).clipToBounds()) {
+        fun Modifier.positionOnScene(area: Rect): Modifier =
+            offset(
+                x = sceneWidth * (area.left / ArtworkWidth),
+                y = sceneHeight * ((area.top - WorkbenchTop) / WorkbenchHeight),
+            ).size(
+                width = sceneWidth * (area.width / ArtworkWidth),
+                height = sceneHeight * (area.height / WorkbenchHeight),
+            )
+
+        Box(
+            Modifier.size(sceneWidth, sceneHeight).clipToBounds().onGloballyPositioned { coordinates ->
+                onViewportChanged(
+                    Rect(
+                        coordinates.positionInRoot(),
+                        Size(coordinates.size.width.toFloat(), coordinates.size.height.toFloat()),
+                    ),
+                )
+            },
+        ) {
             Canvas(Modifier.matchParentSize()) {
                 val scale = size.width / ArtworkWidth
                 withTransform({
@@ -169,57 +220,125 @@ internal fun WorkbenchScene(
                     scale(scale, scale, pivot = Offset.Zero)
                 }) {
                     drawSheet(artwork.emptyCase)
-                    if (assembly.isInstalled(ComputerPart.SidePanel)) {
-                        drawPart(artwork, ComputerPart.SidePanel)
-                    } else {
-                        for (part in ComputerPart.entries) {
-                            if (assembly.isInstalled(part)) drawPart(artwork, part)
+                    for (part in visibleParts) {
+                        drawPart(artwork, part)
+                        part.screws.forEachIndexed { index, screw ->
+                            if (!assembly.hasScrew(part, index)) {
+                                drawScrewHole(screw)
+                            } else if (screwdriverSelected && assembly.canUnscrew(part, index)) {
+                                drawScrewHighlight(screw)
+                            }
                         }
                     }
                     if (selectedPart != null) {
-                        val installed = assembly.isInstalled(selectedPart)
-                        if (assembly.isVisible(selectedPart) || (!installed && assembly.blockerFor(selectedPart) == null)) {
-                            drawPartHighlight(selectedPart, installed)
+                        if (assembly.isVisible(selectedPart)) {
+                            drawPartHighlight(selectedPart)
+                        } else if (assembly.canInstall(selectedPart)) {
+                            drawPlacementGuide(selectedPart, overPlacementGuide)
                         }
                     }
                 }
             }
-            // The input targets are stacked in the same order as their corresponding artwork.
-            for (part in ComputerPart.entries) {
-                if (!assembly.isVisible(part)) continue
-                val hit = partArtwork.getValue(part).hitArea
-                Box(
-                    Modifier
-                        .offset(
-                            x = sceneWidth * (hit.left / ArtworkWidth),
-                            y = sceneHeight * ((hit.top - WorkbenchTop) / WorkbenchHeight),
+            // Parts use the same stacking order for drawing and hit testing.
+            CompositionLocalProvider(LocalViewConfiguration provides workbenchConfiguration) {
+                for (part in visibleParts) {
+                    key(part) {
+                        Box(
+                            Modifier.positionOnScene(partArtwork.getValue(part).hitArea)
+                                .semantics {
+                                    contentDescription = part.label
+                                    role = Role.Button
+                                    onClick {
+                                        onSelect(part)
+                                        true
+                                    }
+                                    onLongClick {
+                                        onRemove(part)
+                                        true
+                                    }
+                                }
+                                .pointerInput(part) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            currentHoldChanged(part, true)
+                                            try {
+                                                tryAwaitRelease()
+                                            } finally {
+                                                currentHoldChanged(part, false)
+                                            }
+                                        },
+                                        onLongPress = { currentRemove(part) },
+                                    )
+                                },
                         )
-                        .size(
-                            width = sceneWidth * (hit.width / ArtworkWidth),
-                            height = sceneHeight * (hit.height / WorkbenchHeight),
-                        )
-                        .semantics { contentDescription = part.label }
-                        .clickable(interactionSource = null, indication = null, role = Role.Button) { onSelect(part) },
-                )
+                    }
+                }
+            }
+            if (screwdriverSelected) {
+                for (part in visibleParts) {
+                    part.screws.forEachIndexed { index, screw ->
+                        if (assembly.canUnscrew(part, index)) {
+                            key(part, index) {
+                                Box(
+                                    Modifier.positionOnScene(screwArea(screw, 34))
+                                        .semantics { contentDescription = "${part.label}螺丝 ${index + 1}" }
+                                        .clickable(interactionSource = null, indication = null, role = Role.Button) {
+                                            onUnscrew(part, index)
+                                        },
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
 
+internal fun isOverPlacementGuide(part: ComputerPart, viewport: Rect?, position: Offset): Boolean {
+    if (viewport == null || !viewport.contains(position)) return false
+    val local = position - viewport.topLeft
+    val point = Offset(local.x * ArtworkWidth / viewport.width, WorkbenchTop + local.y * WorkbenchHeight / viewport.height)
+    return placementArea(part).contains(point)
+}
+
 @Composable
 internal fun PartThumbnail(artwork: WorkbenchArtwork, part: ComputerPart, modifier: Modifier) {
     Canvas(modifier) {
-        val bounds = partArtwork.getValue(part).bounds
-        val scale = minOf(size.width / bounds.width, size.height / bounds.height)
-        val left = (size.width - bounds.width * scale) / 2 - bounds.left * scale
-        val top = (size.height - bounds.height * scale) / 2 - bounds.top * scale
-        withTransform({
-            translate(left, top)
-            scale(scale, scale, pivot = Offset.Zero)
-        }) {
-            drawPart(artwork, part)
+        drawPartPreview(artwork, part, center, size)
+    }
+}
+
+internal fun DrawScope.drawPartPreview(artwork: WorkbenchArtwork, part: ComputerPart, position: Offset, available: Size) {
+    fitArtwork(partArtwork.getValue(part).bounds, position, available) {
+        drawPart(artwork, part)
+    }
+}
+
+private val ScrewdriverBounds = bounds(933, 190, 1007, 626)
+private val ScrewdriverOutline = outline(
+    963 to 190, 976 to 200, 976 to 403, 988 to 412, 996 to 438, 1006 to 450,
+    1006 to 578, 994 to 611, 981 to 624, 955 to 624, 936 to 605, 933 to 581,
+    935 to 450, 944 to 427, 956 to 410, 956 to 219,
+)
+
+@Composable
+internal fun ScrewdriverThumbnail(artwork: WorkbenchArtwork, modifier: Modifier) {
+    Canvas(modifier) {
+        rotate(-55f) {
+            fitArtwork(ScrewdriverBounds, center, size) {
+                clipPath(ScrewdriverOutline) { drawSheet(artwork.emptyCase) }
+            }
         }
     }
+}
+
+private fun DrawScope.fitArtwork(bounds: Rect, position: Offset, available: Size, draw: DrawScope.() -> Unit) {
+    val scale = minOf(available.width / bounds.width, available.height / bounds.height)
+    withTransform({
+        translate(position.x - bounds.center.x * scale, position.y - bounds.center.y * scale)
+        scale(scale, scale, pivot = Offset.Zero)
+    }, draw)
 }
 
 private fun DrawScope.drawSheet(image: ImageBitmap) {
@@ -265,16 +384,41 @@ private fun DrawScope.drawProcessor(bounds: Rect) {
     )
 }
 
-private fun DrawScope.drawPartHighlight(part: ComputerPart, installed: Boolean) {
+private fun DrawScope.drawPartHighlight(part: ComputerPart) {
     val art = partArtwork.getValue(part)
-    val color = if (installed) Color(0xFFFFC064) else Color(0xFF7ED5C9)
+    val color = Color(0xFFFFC064)
     val stroke = Stroke(width = 6f)
     val shape = art.outline
     if (shape == null) {
-        if (!installed) drawRect(color.copy(alpha = 0.18f), art.bounds.topLeft, art.bounds.size)
         drawRect(color, art.bounds.topLeft, art.bounds.size, style = stroke)
     } else {
-        if (!installed) drawPath(shape, color.copy(alpha = 0.18f))
         drawPath(shape, color, style = stroke)
     }
+}
+
+private fun placementArea(part: ComputerPart): Rect = partArtwork.getValue(part).hitArea.inflate(18f)
+
+private fun DrawScope.drawPlacementGuide(part: ComputerPart, overGuide: Boolean) {
+    val frame = placementArea(part)
+    val color = if (overGuide) Color(0xFFAEF3AB) else Color(0xFF7ED5C9)
+    drawRect(color.copy(alpha = if (overGuide) 0.24f else 0.13f), frame.topLeft, frame.size)
+    val dash = if (overGuide) null else PathEffect.dashPathEffect(floatArrayOf(16f, 10f))
+    drawRect(color, frame.topLeft, frame.size, style = Stroke(6f, pathEffect = dash))
+}
+
+private fun screwArea(screw: MountingScrew, radius: Int) =
+    bounds(screw.x - radius, screw.y - radius, screw.x + radius, screw.y + radius)
+
+private fun DrawScope.drawScrewHole(screw: MountingScrew) {
+    val rim = screwArea(screw, screw.radius)
+    val hole = screwArea(screw, screw.radius - 4)
+    drawRect(Color(0xFF34313A), rim.topLeft, rim.size)
+    drawRect(Color(0xFF100F13), hole.topLeft, hole.size)
+}
+
+private fun DrawScope.drawScrewHighlight(screw: MountingScrew) {
+    val ring = screwArea(screw, screw.radius + 8)
+    val color = Color(0xFFFFC064)
+    drawRect(color.copy(alpha = 0.25f), ring.topLeft, ring.size)
+    drawRect(color, ring.topLeft, ring.size, style = Stroke(width = 5f))
 }
