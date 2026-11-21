@@ -1,0 +1,107 @@
+package com.gamedraft.preview
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+
+internal enum class TabletPage { Orders, Delivery }
+
+@Composable
+internal fun WorkshopTablet(
+    session: RepairSession,
+    page: TabletPage,
+    onPageChanged: (TabletPage) -> Unit,
+    onClose: () -> Unit,
+    onAccept: () -> Unit,
+    onDeliver: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().padding(12.dp).background(Panel).border(2.dp, Border).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GameText("平板电脑", fontSize = 22, modifier = Modifier.semantics { heading() })
+            GameButton("工作台", onClose)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GameButton("接单", { onPageChanged(TabletPage.Orders) }, Modifier.weight(1f), primary = page == TabletPage.Orders)
+            GameButton("交单", { onPageChanged(TabletPage.Delivery) }, Modifier.weight(1f), primary = page == TabletPage.Delivery)
+        }
+        Column(
+            Modifier.weight(1f).fillMaxWidth().background(SlotBackground)
+                .border(1.dp, Border).verticalScroll(rememberScrollState()).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            when (page) {
+                TabletPage.Orders -> OrderPage(session.stage, onAccept)
+                TabletPage.Delivery -> DeliveryPage(session, onDeliver)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrderPage(stage: OrderStage, onAccept: () -> Unit) {
+    val status = when (stage) {
+        OrderStage.Available -> "待接订单"
+        OrderStage.Active -> "当前订单"
+        OrderStage.Delivered -> "已交付"
+    }
+    GameText(status, fontSize = 14, color = MutedText)
+    GameText(StarterOrder.title, fontSize = 24, modifier = Modifier.semantics { heading() })
+    GameText(StarterOrder.request)
+    if (stage == OrderStage.Available) {
+        GameButton("接下订单", onAccept, Modifier.fillMaxWidth(), primary = true)
+    }
+}
+
+@Composable
+private fun DeliveryPage(session: RepairSession, onDeliver: () -> Unit) {
+    when (session.stage) {
+        OrderStage.Available -> GameText("接单后可交付主机", color = MutedText)
+        OrderStage.Delivered -> {
+            GameText("交付完成", fontSize = 24, color = Color(0xFF8CD9CF), modifier = Modifier.semantics { heading() })
+            GameText("主机已交还，工作台已清空。", color = MutedText)
+        }
+        OrderStage.Active -> {
+            GameText(StarterOrder.title, fontSize = 24, modifier = Modifier.semantics { heading() })
+            val problems = session.deliveryProblems()
+            if (problems.isEmpty()) {
+                GameText("主机已通过交付检查", color = Color(0xFF8CD9CF))
+            } else {
+                GameText("交付前需要处理", color = Amber)
+                for (problem in problems) GameText(problem.message(), fontSize = 15, color = MutedText)
+            }
+            GameButton("确认交付", onDeliver, Modifier.fillMaxWidth(), primary = true, enabled = problems.isEmpty())
+        }
+    }
+}
+
+private fun DeliveryProblem.message(): String {
+    val names = parts.joinToString("、") { it.label }
+    return when (type) {
+        DeliveryProblemType.UnresolvedFault -> "重新拔插显卡供电线"
+        DeliveryProblemType.MissingParts -> "缺少部件 $names"
+        DeliveryProblemType.LooseScrews -> "螺丝未装齐 $names"
+        DeliveryProblemType.BrokenParts -> "损坏部件 $names"
+        DeliveryProblemType.DowngradedParts -> "低于接单配置 $names"
+    }
+}

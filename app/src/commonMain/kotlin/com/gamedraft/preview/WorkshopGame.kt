@@ -66,23 +66,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gamedraft.preview.resources.Res
 import com.gamedraft.preview.resources.screen_labels
-import com.gamedraft.preview.resources.workbench_assembled
+import com.gamedraft.preview.resources.workbench_clean
 import org.jetbrains.compose.resources.Font
 import org.jetbrains.compose.resources.imageResource
 
-private val Background = Color(0xFF10171F)
-private val Panel = Color(0xFF1C2832)
-private val SlotBackground = Color(0xFF141D25)
-private val Border = Color(0xFF455764)
+internal val Background = Color(0xFF10171F)
+internal val Panel = Color(0xFF1C2832)
+internal val SlotBackground = Color(0xFF141D25)
+internal val Border = Color(0xFF455764)
 private val TextColor = Color(0xFFF3EAE0)
-private val MutedText = Color(0xFFB7C3CA)
-private val Amber = Color(0xFFFFBC70)
+internal val MutedText = Color(0xFFB7C3CA)
+internal val Amber = Color(0xFFFFBC70)
 private val DarkInk = Color(0xFF302012)
 private val GameFont = staticCompositionLocalOf<FontFamily> { FontFamily.SansSerif }
 
-private val AssemblySaver = listSaver<ComputerAssembly, String>(
+private val SessionSaver = listSaver<RepairSession, String>(
     save = { it.save() },
-    restore = ComputerAssembly::restore,
+    restore = RepairSession::restore,
 )
 
 private data class InventoryDrag(val part: ComputerPart, val position: Offset)
@@ -112,7 +112,7 @@ fun WorkshopGame() {
 private fun StartScreen(onStart: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Image(
-            imageResource(Res.drawable.workbench_assembled),
+            imageResource(Res.drawable.workbench_clean),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
@@ -141,7 +141,9 @@ private fun StartScreen(onStart: () -> Unit) {
 @Composable
 private fun WorkbenchScreen(onHome: () -> Unit) {
     val artwork = loadWorkbenchArtwork()
-    var assembly by rememberSaveable(stateSaver = AssemblySaver) { mutableStateOf(ComputerAssembly()) }
+    var session by rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
+    var tabletOpen by rememberSaveable { mutableStateOf(false) }
+    var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
     var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
@@ -149,6 +151,8 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     var feedback by remember { mutableStateOf<String?>(null) }
     var viewport by remember { mutableStateOf<Rect?>(null) }
     var screenOrigin by remember { mutableStateOf(Offset.Zero) }
+    val assembly = session.assembly
+    val hasMachine = session.stage == OrderStage.Active
     val selection = selectedName?.let(ComputerPart::valueOf)
     val currentDrag = draggedPart
     val overPlacementGuide = currentDrag != null && assembly.canInstall(currentDrag.part) &&
@@ -160,8 +164,9 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     }
 
     fun canHold(target: WorkbenchHold): Boolean {
-        val screw = target.screw ?: return assembly.canRemove(target.part)
-        return screwdriverSelected && assembly.screwAction(target.part, screw.index) == screw.action
+        if (tabletOpen || session.stage != OrderStage.Active) return false
+        val screw = target.screw ?: return session.assembly.canRemove(target.part)
+        return screwdriverSelected && session.assembly.screwAction(target.part, screw.index) == screw.action
     }
 
     fun changeHold(target: WorkbenchHold, pressed: Boolean) {
@@ -184,13 +189,13 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
 
         val screw = target.screw
         if (screw == null) {
-            assembly = assembly.remove(part)
+            session = session.remove(part)
             selectedName = null
             feedback = "${part.label}已放入物品栏"
         } else {
-            assembly = assembly.turnScrew(part, screw.index, screw.action)
+            session = session.turnScrew(part, screw.index, screw.action)
             if (screw.action == ScrewAction.Tighten) {
-                val emptyHoles = part.screws.size - assembly.screwsRemaining(part)
+                val emptyHoles = part.screws.size - session.assembly.screwsRemaining(part)
                 feedback = if (emptyHoles == 0) "螺丝已装齐" else "还需装回 $emptyHoles 颗螺丝"
             }
         }
@@ -198,7 +203,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
 
     fun moveInventoryPart(part: ComputerPart, position: Offset) {
         val active = draggedPart
-        if (assembly.isInstalled(part) || (active != null && active.part != part)) return
+        if (tabletOpen || session.assembly.isInstalled(part) || (active != null && active.part != part)) return
         if (active == null) selectPart(part)
         draggedPart = InventoryDrag(part, position)
     }
@@ -206,22 +211,51 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     fun finishInventoryDrag(part: ComputerPart, released: Boolean) {
         val active = draggedPart?.takeIf { it.part == part } ?: return
         draggedPart = null
-        if (!released) return
-        val blocker = assembly.blockerFor(part)
+        if (!released || tabletOpen) return
+        val blocker = session.assembly.blockerFor(part)
         when {
             blocker != null -> feedback = blocker.instruction
             !isOverPlacementGuide(part, viewport, active.position) -> feedback = "拖到提示框内再松手"
-            assembly.canInstall(part) -> {
-                assembly = assembly.install(part)
-                if (part.screws.isEmpty()) {
-                    selectedName = null
-                    feedback = "${part.label}已装回"
-                } else {
-                    selectedName = part.name
-                    feedback = "零件已就位，用螺丝刀长按空孔"
+            else -> {
+                val installed = session.install(part)
+                if (installed !== session) {
+                    session = installed
+                    selectedName = part.name.takeIf { part.screws.isNotEmpty() }
+                    feedback = when {
+                        part == ComputerPart.GraphicsCable -> "显卡供电线已重新插好"
+                        part.screws.isEmpty() -> "${part.label}已装回"
+                        else -> "零件已就位，用螺丝刀长按空孔"
+                    }
                 }
             }
         }
+    }
+
+    if (tabletOpen) {
+        WorkshopTablet(
+            session = session,
+            page = tabletPage,
+            onPageChanged = { tabletPage = it },
+            onClose = { tabletOpen = false },
+            onAccept = {
+                val accepted = session.accept()
+                if (accepted !== session) {
+                    session = accepted
+                    tabletOpen = false
+                    feedback = "主机已送到工作台"
+                }
+            },
+            onDeliver = {
+                val delivered = session.deliver()
+                if (delivered !== session) {
+                    session = delivered
+                    selectedName = null
+                    screwdriverSelected = false
+                    feedback = null
+                }
+            },
+        )
+        return
     }
 
     Box(
@@ -239,7 +273,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
             if (artwork.ready) {
                 WorkbenchScene(
                     artwork = artwork,
-                    assembly = assembly,
+                    assembly = assembly.takeIf { hasMachine },
                     selectedPart = selection,
                     screwdriverSelected = screwdriverSelected,
                     overPlacementGuide = overPlacementGuide,
@@ -251,14 +285,25 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                 )
                 ToolStrip(
                     artwork = artwork,
+                    hasMachine = hasMachine,
                     screwdriverSelected = screwdriverSelected,
                     selection = selection,
-                    hint = feedback ?: workbenchHint(assembly, selection, screwdriverSelected, holdingTarget),
+                    hint = when (session.stage) {
+                        OrderStage.Available -> "打开平板接单"
+                        OrderStage.Delivered -> "订单已交付"
+                        OrderStage.Active -> feedback ?: workbenchHint(assembly, selection, screwdriverSelected, holdingTarget)
+                    },
                     holding = holdingTarget,
                     onScrewdriver = {
                         screwdriverSelected = !screwdriverSelected
                         holdingTarget = null
                         feedback = null
+                    },
+                    onTablet = {
+                        holdingTarget = null
+                        draggedPart = null
+                        tabletPage = if (session.stage == OrderStage.Available) TabletPage.Orders else TabletPage.Delivery
+                        tabletOpen = true
                     },
                 )
                 Inventory(
@@ -323,11 +368,13 @@ private fun workbenchHint(
 @Composable
 private fun ToolStrip(
     artwork: WorkbenchArtwork,
+    hasMachine: Boolean,
     screwdriverSelected: Boolean,
     selection: ComputerPart?,
     hint: String,
     holding: WorkbenchHold?,
     onScrewdriver: () -> Unit,
+    onTablet: () -> Unit,
 ) {
     val holdProgress by animateFloatAsState(
         targetValue = if (holding != null) 1f else 0f,
@@ -340,19 +387,13 @@ private fun ToolStrip(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             GameText("工具栏", fontSize = 14, color = MutedText)
-            Row(
-                Modifier
-                    .height(43.dp)
-                    .background(if (screwdriverSelected) Color(0xFF302820) else SlotBackground)
-                    .border(if (screwdriverSelected) 2.dp else 1.dp, if (screwdriverSelected) Amber else Border)
-                    .semantics { selected = screwdriverSelected }
-                    .clickable(role = Role.Button, onClick = onScrewdriver)
-                    .padding(horizontal = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            ToolSlot(
+                label = "螺丝刀",
+                onClick = onScrewdriver,
+                enabled = hasMachine,
+                active = screwdriverSelected,
             ) {
                 ScrewdriverThumbnail(artwork, Modifier.size(width = 29.dp, height = 32.dp))
-                GameText("螺丝刀", fontSize = 14, color = if (screwdriverSelected) Amber else TextColor)
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -369,6 +410,41 @@ private fun ToolStrip(
                 }
             }
         }
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Spacer(Modifier.height(19.dp))
+            ToolSlot(label = "平板", onClick = onTablet) {
+                TabletThumbnail(Modifier.size(24.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolSlot(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    active: Boolean = false,
+    icon: @Composable () -> Unit,
+) {
+    Row(
+        Modifier
+            .height(43.dp)
+            .background(if (active) Color(0xFF302820) else SlotBackground)
+            .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
+            .semantics { selected = active }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon()
+        val color = when {
+            !enabled -> MutedText
+            active -> Amber
+            else -> TextColor
+        }
+        GameText(label, fontSize = 14, color = color)
     }
 }
 
@@ -468,28 +544,35 @@ private fun InventorySlot(
 }
 
 @Composable
-private fun GameButton(
+internal fun GameButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     primary: Boolean = false,
+    enabled: Boolean = true,
 ) {
+    val highlighted = primary && enabled
     Box(
         modifier
             .heightIn(min = if (primary) 46.dp else 42.dp)
             .widthIn(min = 70.dp)
-            .background(if (primary) Amber else SlotBackground)
-            .border(1.dp, if (primary) Color(0xFFC88D52) else Border)
-            .clickable(role = Role.Button, onClick = onClick)
+            .background(if (highlighted) Amber else SlotBackground)
+            .border(1.dp, if (highlighted) Color(0xFFC88D52) else Border)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        GameText(label, color = if (primary) DarkInk else TextColor)
+        val color = when {
+            !enabled -> MutedText
+            highlighted -> DarkInk
+            else -> TextColor
+        }
+        GameText(label, color = color)
     }
 }
 
 @Composable
-private fun GameText(text: String, modifier: Modifier = Modifier, fontSize: Int = 16, color: Color = TextColor) {
+internal fun GameText(text: String, modifier: Modifier = Modifier, fontSize: Int = 16, color: Color = TextColor) {
     BasicText(
         text = text,
         modifier = modifier,

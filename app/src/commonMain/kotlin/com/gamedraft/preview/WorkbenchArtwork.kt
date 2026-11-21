@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.IntSize
 import com.gamedraft.preview.resources.Res
 import com.gamedraft.preview.resources.workbench_assembled
 import com.gamedraft.preview.resources.workbench_board
+import com.gamedraft.preview.resources.workbench_clean
 import com.gamedraft.preview.resources.workbench_empty
 import com.gamedraft.preview.resources.workbench_lid
 import org.jetbrains.compose.resources.imageResource
@@ -70,17 +71,19 @@ internal data class WorkbenchHold(val part: ComputerPart, val screw: Screw? = nu
 }
 
 internal data class WorkbenchArtwork(
+    val table: ImageBitmap,
     val emptyCase: ImageBitmap,
     val assembled: ImageBitmap,
     val board: ImageBitmap,
     val lid: ImageBitmap,
 ) {
     val ready: Boolean
-        get() = listOf(emptyCase, assembled, board, lid).all { it.width > 1 && it.height > 1 }
+        get() = listOf(table, emptyCase, assembled, board, lid).all { it.width > 1 && it.height > 1 }
 }
 
 @Composable
 internal fun loadWorkbenchArtwork() = WorkbenchArtwork(
+    table = imageResource(Res.drawable.workbench_clean),
     emptyCase = imageResource(Res.drawable.workbench_empty),
     assembled = imageResource(Res.drawable.workbench_assembled),
     board = imageResource(Res.drawable.workbench_board),
@@ -101,6 +104,12 @@ private fun outline(first: Pair<Int, Int>, vararg remaining: Pair<Int, Int>) = P
     for ((x, y) in remaining) lineTo(x.toFloat(), y.toFloat())
     close()
 }
+
+private val ComputerCaseOutline = outline(
+    105 to 233, 882 to 233, 911 to 280, 911 to 1233, 890 to 1273, 861 to 1293,
+    811 to 1293, 794 to 1305, 714 to 1305, 704 to 1293, 238 to 1293, 225 to 1305,
+    151 to 1305, 144 to 1293, 105 to 1293,
+)
 
 // Coordinates are measured in the same 1024 by 1536 view for every artwork layer.
 private val partArtwork = mapOf(
@@ -182,7 +191,7 @@ private val partArtwork = mapOf(
 @Composable
 internal fun WorkbenchScene(
     artwork: WorkbenchArtwork,
-    assembly: ComputerAssembly,
+    assembly: ComputerAssembly?,
     selectedPart: ComputerPart?,
     screwdriverSelected: Boolean,
     overPlacementGuide: Boolean,
@@ -192,7 +201,7 @@ internal fun WorkbenchScene(
     onHoldComplete: (WorkbenchHold) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val visibleParts = ComputerPart.entries.filter(assembly::isVisible)
+    val visibleParts = assembly?.let { machine -> ComputerPart.entries.filter(machine::isVisible) }.orEmpty()
 
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         val aspectRatio = ArtworkWidth.toFloat() / WorkbenchHeight
@@ -224,23 +233,26 @@ internal fun WorkbenchScene(
                     translate(0f, -WorkbenchTop * scale)
                     scale(scale, scale, pivot = Offset.Zero)
                 }) {
-                    drawSheet(artwork.emptyCase)
-                    for (part in visibleParts) {
-                        drawPart(artwork, part)
-                        part.screws.forEachIndexed { index, screw ->
-                            if (!assembly.hasScrew(part, index)) {
-                                drawScrewHole(screw)
-                            }
-                            if (screwdriverSelected) {
-                                assembly.screwAction(part, index)?.let { drawScrewHighlight(screw, it) }
+                    drawSheet(artwork.table)
+                    if (assembly != null) {
+                        clipPath(ComputerCaseOutline) { drawSheet(artwork.emptyCase) }
+                        for (part in visibleParts) {
+                            drawPart(artwork, part)
+                            part.screws.forEachIndexed { index, screw ->
+                                if (!assembly.hasScrew(part, index)) {
+                                    drawScrewHole(screw)
+                                }
+                                if (screwdriverSelected) {
+                                    assembly.screwAction(part, index)?.let { drawScrewHighlight(screw, it) }
+                                }
                             }
                         }
-                    }
-                    if (selectedPart != null) {
-                        if (assembly.isVisible(selectedPart)) {
-                            drawPartHighlight(selectedPart)
-                        } else if (assembly.canInstall(selectedPart)) {
-                            drawPlacementGuide(selectedPart, overPlacementGuide)
+                        if (selectedPart != null) {
+                            if (assembly.isVisible(selectedPart)) {
+                                drawPartHighlight(selectedPart)
+                            } else if (assembly.canInstall(selectedPart)) {
+                                drawPlacementGuide(selectedPart, overPlacementGuide)
+                            }
                         }
                     }
                 }
@@ -257,7 +269,7 @@ internal fun WorkbenchScene(
                     )
                 }
             }
-            if (screwdriverSelected) {
+            if (assembly != null && screwdriverSelected) {
                 for (part in visibleParts) {
                     part.screws.forEachIndexed { index, screw ->
                         val action = assembly.screwAction(part, index)
@@ -362,6 +374,27 @@ internal fun ScrewdriverThumbnail(artwork: WorkbenchArtwork, modifier: Modifier)
                 clipPath(ScrewdriverOutline) { drawSheet(artwork.emptyCase) }
             }
         }
+    }
+}
+
+@Composable
+internal fun TabletThumbnail(modifier: Modifier) {
+    Canvas(modifier) {
+        val pixel = minOf(size.width / 24f, size.height / 24f)
+        val origin = Offset((size.width - 24f * pixel) / 2, (size.height - 24f * pixel) / 2)
+
+        fun drawPixels(color: Color, x: Int, y: Int, width: Int, height: Int) {
+            drawRect(color, origin + Offset(x * pixel, y * pixel), Size(width * pixel, height * pixel))
+        }
+
+        drawPixels(Color(0xFF0A1018), 1, 4, 22, 17)
+        drawPixels(Color(0xFF677986), 2, 3, 20, 17)
+        drawPixels(Color(0xFF222D38), 3, 4, 18, 15)
+        drawPixels(Color(0xFF25465B), 5, 6, 14, 10)
+        drawPixels(Color(0xFF416F78), 5, 6, 14, 2)
+        drawPixels(Color(0xFF8CD9CF), 7, 10, 7, 1)
+        drawPixels(Color(0xFF6C9FAC), 7, 13, 9, 1)
+        drawPixels(Color(0xFFFFBC70), 11, 17, 2, 1)
     }
 }
 
