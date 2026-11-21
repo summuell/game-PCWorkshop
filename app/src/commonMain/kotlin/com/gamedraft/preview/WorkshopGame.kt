@@ -145,6 +145,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     var session by rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
     var tabletOpen by rememberSaveable { mutableStateOf(false) }
     var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
+    var startupTest by remember { mutableStateOf<RepairSession?>(null) }
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
     var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
@@ -232,6 +233,20 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
         }
     }
 
+    val testedSession = startupTest
+    if (testedSession != null) {
+        StartupMonitor(
+            stopAt = remember(testedSession) { testedSession.firstStartupFailure() },
+            onClose = { startupTest = null },
+            onPassed = {
+                if (startupTest === testedSession && session === testedSession) {
+                    session = testedSession.recordSuccessfulStartup()
+                }
+            },
+        )
+        return
+    }
+
     if (tabletOpen) {
         WorkshopTablet(
             session = session,
@@ -245,6 +260,9 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     tabletOpen = false
                     feedback = "主机已送到工作台"
                 }
+            },
+            onTestStartup = {
+                if (session.stage == OrderStage.Active) startupTest = session
             },
             onDeliver = {
                 val delivered = session.deliver()

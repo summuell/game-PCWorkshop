@@ -37,16 +37,22 @@ internal object StarterOrder {
     }
 }
 
-private val requiredStartupParts = listOf(
-    ComputerPart.PowerSupply,
-    ComputerPart.Motherboard,
-    ComputerPart.MotherboardCable,
-    ComputerPart.Processor,
-    ComputerPart.Cooler,
-    ComputerPart.SolidStateDrive,
-    ComputerPart.GraphicsCard,
-    ComputerPart.GraphicsCable,
+internal enum class StartupStage(val durationMillis: Long) {
+    Power(420),
+    SelfTest(640),
+    Video(540),
+    BootDrive(580),
+    SystemLoading(1000),
+    Desktop(0),
+}
+
+internal data class HardwareConfiguration(
+    val assembly: ComputerAssembly,
+    val parts: Map<ComputerPart, CustomerPart>,
+    val graphicsCableReseated: Boolean,
 )
+
+private const val StartupVerifiedMarker = "StartupVerified"
 
 internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNormally: Boolean) {
     val ready: Boolean
@@ -58,23 +64,55 @@ internal data class RepairSession(
     val assembly: ComputerAssembly = ComputerAssembly(),
     val graphicsCableReseated: Boolean = false,
     val parts: Map<ComputerPart, CustomerPart> = StarterOrder.originalParts,
+    private val startupVerifiedFor: HardwareConfiguration? = null,
 ) {
+    private val hardware: HardwareConfiguration
+        get() = HardwareConfiguration(assembly, parts, graphicsCableReseated)
+
+    private val startupVerified: Boolean
+        get() = startupVerifiedFor == hardware
+
     fun accept(): RepairSession =
         if (stage == OrderStage.Available) RepairSession(stage = OrderStage.Active) else this
 
     fun remove(part: ComputerPart): RepairSession =
-        if (stage == OrderStage.Active) copy(assembly = assembly.remove(part)) else this
+        if (stage == OrderStage.Active) withAssembly(assembly.remove(part)) else this
 
     fun install(part: ComputerPart): RepairSession {
         if (stage != OrderStage.Active || !assembly.canInstall(part) || part !in parts) return this
         return copy(
             assembly = assembly.install(part),
             graphicsCableReseated = graphicsCableReseated || part == ComputerPart.GraphicsCable,
+            startupVerifiedFor = null,
         )
     }
 
     fun turnScrew(part: ComputerPart, index: Int, action: ScrewAction): RepairSession =
-        if (stage == OrderStage.Active) copy(assembly = assembly.turnScrew(part, index, action)) else this
+        if (stage == OrderStage.Active) withAssembly(assembly.turnScrew(part, index, action)) else this
+
+    private fun withAssembly(updated: ComputerAssembly): RepairSession =
+        if (updated == assembly) this else copy(assembly = updated, startupVerifiedFor = null)
+
+    fun firstStartupFailure(): StartupStage? = when {
+        !hasWorkingPart(ComputerPart.PowerSupply) ||
+            !hasWorkingPart(ComputerPart.MotherboardCable) -> StartupStage.Power
+        !hasWorkingPart(ComputerPart.Motherboard) ||
+            !hasWorkingPart(ComputerPart.Processor) ||
+            !hasWorkingPart(ComputerPart.Cooler) ||
+            !(hasWorkingPart(ComputerPart.MemoryLeft) || hasWorkingPart(ComputerPart.MemoryRight)) -> StartupStage.SelfTest
+        !graphicsCableReseated ||
+            !hasWorkingPart(ComputerPart.GraphicsCard) ||
+            !hasWorkingPart(ComputerPart.GraphicsCable) -> StartupStage.Video
+        !hasWorkingPart(ComputerPart.SolidStateDrive) -> StartupStage.BootDrive
+        else -> null
+    }
+
+    fun recordSuccessfulStartup(): RepairSession =
+        if (stage == OrderStage.Active && firstStartupFailure() == null) {
+            copy(startupVerifiedFor = hardware)
+        } else {
+            this
+        }
 
     fun deliveryRequirements(): DeliveryRequirements {
         val partsIntact = StarterOrder.originalParts.all { (part, original) ->
@@ -83,10 +121,7 @@ internal data class RepairSession(
                 current.specification.meets(original.specification) &&
                 assembly.screwsRemaining(part) == part.screws.size
         }
-        val startsNormally = graphicsCableReseated &&
-            requiredStartupParts.all(::hasWorkingPart) &&
-            (hasWorkingPart(ComputerPart.MemoryLeft) || hasWorkingPart(ComputerPart.MemoryRight))
-        return DeliveryRequirements(partsIntact, startsNormally)
+        return DeliveryRequirements(partsIntact, startupVerified)
     }
 
     private fun hasWorkingPart(part: ComputerPart): Boolean =
@@ -99,17 +134,24 @@ internal data class RepairSession(
             this
         }
 
-    fun save(): List<String> = listOf(stage.name, graphicsCableReseated.toString()) + assembly.save()
+    fun save(): List<String> = buildList {
+        add(stage.name)
+        add(graphicsCableReseated.toString())
+        if (startupVerified && parts == StarterOrder.originalParts) add(StartupVerifiedMarker)
+        addAll(assembly.save())
+    }
 
     companion object {
         fun restore(entries: List<String>): RepairSession {
             val stage = OrderStage.entries.firstOrNull { it.name == entries.firstOrNull() } ?: return RepairSession()
             if (stage != OrderStage.Active) return RepairSession(stage = stage)
-            return RepairSession(
+            val startupVerified = entries.getOrNull(2) == StartupVerifiedMarker
+            val session = RepairSession(
                 stage = stage,
-                assembly = ComputerAssembly.restore(entries.drop(2)),
+                assembly = ComputerAssembly.restore(entries.drop(if (startupVerified) 3 else 2)),
                 graphicsCableReseated = entries.getOrNull(1) == "true",
             )
+            return if (startupVerified) session.recordSuccessfulStartup() else session
         }
     }
 }
