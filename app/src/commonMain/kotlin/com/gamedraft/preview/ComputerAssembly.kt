@@ -2,6 +2,8 @@ package com.gamedraft.preview
 
 internal data class MountingScrew(val x: Int, val y: Int, val radius: Int = 11)
 
+internal enum class ScrewAction { Loosen, Tighten }
+
 internal enum class ComputerPart(val label: String, val screws: List<MountingScrew> = emptyList()) {
     Motherboard(
         "主板",
@@ -89,12 +91,21 @@ internal data class ComputerAssembly(
 
     fun screwsRemaining(part: ComputerPart): Int = part.screws.indices.count { hasScrew(part, it) }
 
-    fun canUnscrew(part: ComputerPart, index: Int): Boolean =
-        hasScrew(part, index) && isVisible(part) && blockerFor(part) == null
+    fun screwAction(part: ComputerPart, index: Int): ScrewAction? {
+        if (!isVisible(part) || index !in part.screws.indices) return null
+        if (!hasScrew(part, index)) return ScrewAction.Tighten
+        return ScrewAction.Loosen.takeIf { blockerFor(part) == null }
+    }
 
-    fun unscrew(part: ComputerPart, index: Int): ComputerAssembly {
-        if (!canUnscrew(part, index)) return this
-        return copy(loosenedScrews = loosenedScrews + (part to (loosenedScrews[part].orEmpty() + index)))
+    fun turnScrew(part: ComputerPart, index: Int, action: ScrewAction): ComputerAssembly {
+        if (screwAction(part, index) != action) return this
+        val loosened = loosenedScrews[part].orEmpty()
+        val updated = when (action) {
+            ScrewAction.Loosen -> loosened + index
+            ScrewAction.Tighten -> loosened - index
+        }
+        val updatedScrews = if (updated.isEmpty()) loosenedScrews - part else loosenedScrews + (part to updated)
+        return copy(loosenedScrews = updatedScrews)
     }
 
     fun canRemove(part: ComputerPart): Boolean =
@@ -109,7 +120,9 @@ internal data class ComputerAssembly(
 
     fun install(part: ComputerPart): ComputerAssembly {
         if (!canInstall(part)) return this
-        return copy(inventory = inventory - part)
+        val emptyHoles = part.screws.indices.toSet()
+        val updatedScrews = if (emptyHoles.isEmpty()) loosenedScrews else loosenedScrews + (part to emptyHoles)
+        return copy(inventory = inventory - part, loosenedScrews = updatedScrews)
     }
 
     fun save(): List<String> = inventory.map { it.name } + loosenedScrews.flatMap { (part, screws) ->

@@ -144,7 +144,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     var assembly by rememberSaveable(stateSaver = AssemblySaver) { mutableStateOf(ComputerAssembly()) }
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
-    var holdingPart by remember { mutableStateOf<ComputerPart?>(null) }
+    var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
     var feedback by remember { mutableStateOf<String?>(null) }
     var viewport by remember { mutableStateOf<Rect?>(null) }
@@ -159,24 +159,40 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
         feedback = null
     }
 
-    fun changeHold(part: ComputerPart, pressed: Boolean) {
-        if (pressed && draggedPart == null) {
-            selectPart(part)
-            holdingPart = part.takeIf(assembly::canRemove)
-        } else if (holdingPart == part) {
-            holdingPart = null
+    fun canHold(target: WorkbenchHold): Boolean {
+        val screw = target.screw ?: return assembly.canRemove(target.part)
+        return screwdriverSelected && assembly.screwAction(target.part, screw.index) == screw.action
+    }
+
+    fun changeHold(target: WorkbenchHold, pressed: Boolean) {
+        if (!pressed) {
+            if (holdingTarget == target) holdingTarget = null
+            return
+        }
+        if (draggedPart == null && holdingTarget == null) {
+            selectPart(target.part)
+            holdingTarget = target.takeIf(::canHold)
         }
     }
 
-    fun finishHold(part: ComputerPart) {
-        if (draggedPart != null) return
-        holdingPart = null
-        if (assembly.canRemove(part)) {
+    fun finishHold(target: WorkbenchHold) {
+        if (draggedPart != null || (holdingTarget != null && holdingTarget != target)) return
+        holdingTarget = null
+        val part = target.part
+        selectPart(part)
+        if (!canHold(target)) return
+
+        val screw = target.screw
+        if (screw == null) {
             assembly = assembly.remove(part)
             selectedName = null
             feedback = "${part.label}已放入物品栏"
         } else {
-            selectPart(part)
+            assembly = assembly.turnScrew(part, screw.index, screw.action)
+            if (screw.action == ScrewAction.Tighten) {
+                val emptyHoles = part.screws.size - assembly.screwsRemaining(part)
+                feedback = if (emptyHoles == 0) "螺丝已装齐" else "还需装回 $emptyHoles 颗螺丝"
+            }
         }
     }
 
@@ -197,8 +213,13 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
             !isOverPlacementGuide(part, viewport, active.position) -> feedback = "拖到提示框内再松手"
             assembly.canInstall(part) -> {
                 assembly = assembly.install(part)
-                selectedName = null
-                feedback = "${part.label}已装回"
+                if (part.screws.isEmpty()) {
+                    selectedName = null
+                    feedback = "${part.label}已装回"
+                } else {
+                    selectedName = part.name
+                    feedback = "零件已就位，用螺丝刀长按空孔"
+                }
             }
         }
     }
@@ -225,24 +246,18 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     onViewportChanged = { viewport = it },
                     onSelect = ::selectPart,
                     onHoldChanged = ::changeHold,
-                    onRemove = ::finishHold,
-                    onUnscrew = { part, screw ->
-                        if (screwdriverSelected && draggedPart == null) {
-                            assembly = assembly.unscrew(part, screw)
-                            selectPart(part)
-                        }
-                    },
+                    onHoldComplete = ::finishHold,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
                 ToolStrip(
                     artwork = artwork,
                     screwdriverSelected = screwdriverSelected,
                     selection = selection,
-                    hint = feedback ?: workbenchHint(assembly, selection, screwdriverSelected, holdingPart),
-                    holding = holdingPart != null,
+                    hint = feedback ?: workbenchHint(assembly, selection, screwdriverSelected, holdingTarget),
+                    holding = holdingTarget,
                     onScrewdriver = {
                         screwdriverSelected = !screwdriverSelected
-                        selectedName = null
+                        holdingTarget = null
                         feedback = null
                     },
                 )
@@ -277,13 +292,19 @@ private fun workbenchHint(
     assembly: ComputerAssembly,
     selection: ComputerPart?,
     screwdriverSelected: Boolean,
-    holdingPart: ComputerPart?,
+    holding: WorkbenchHold?,
 ): String {
-    if (holdingPart != null) return "继续按住，取下零件"
+    if (holding != null) {
+        return when (holding.screw?.action) {
+            ScrewAction.Loosen -> "继续按住，拧下螺丝"
+            ScrewAction.Tighten -> "继续按住，拧紧螺丝"
+            null -> "继续按住，取下零件"
+        }
+    }
     if (selection == null) {
         return when {
-            screwdriverSelected -> "点按高亮的螺丝"
-            assembly.isInstalled(ComputerPart.SidePanel) -> "选中螺丝刀，再点盖板螺丝"
+            screwdriverSelected -> "长按螺丝卸下，长按空孔装回"
+            assembly.isInstalled(ComputerPart.SidePanel) -> "选中螺丝刀，长按盖板螺丝"
             else -> "长按零件拆下，从物品栏拖回"
         }
     }
@@ -292,6 +313,8 @@ private fun workbenchHint(
     val screws = assembly.screwsRemaining(selection)
     return if (screws > 0) {
         if (screwdriverSelected) "还剩 $screws 颗螺丝" else "用螺丝刀拆下 $screws 颗螺丝"
+    } else if (screwdriverSelected && selection.screws.isNotEmpty()) {
+        "长按部件取下，或长按空孔装螺丝"
     } else {
         "长按零件拆下"
     }
@@ -303,12 +326,12 @@ private fun ToolStrip(
     screwdriverSelected: Boolean,
     selection: ComputerPart?,
     hint: String,
-    holding: Boolean,
+    holding: WorkbenchHold?,
     onScrewdriver: () -> Unit,
 ) {
     val holdProgress by animateFloatAsState(
-        targetValue = if (holding) 1f else 0f,
-        animationSpec = if (holding) tween(PartHoldMillis, easing = LinearEasing) else snap(),
+        targetValue = if (holding != null) 1f else 0f,
+        animationSpec = holding?.let { tween(it.durationMillis, easing = LinearEasing) } ?: snap(),
     )
     Row(
         Modifier.fillMaxWidth().heightIn(min = 80.dp).background(Panel).padding(horizontal = 14.dp, vertical = 6.dp),
@@ -338,9 +361,9 @@ private fun ToolStrip(
             } else {
                 Spacer(Modifier.height(3.dp))
             }
-            GameText(hint, fontSize = 14, color = if (holding) Amber else MutedText)
+            GameText(hint, fontSize = 14, color = if (holding != null) Amber else MutedText)
             Box(Modifier.fillMaxWidth().height(3.dp)) {
-                if (holding) {
+                if (holding != null) {
                     Box(Modifier.fillMaxSize().background(SlotBackground))
                     Box(Modifier.fillMaxWidth(holdProgress).height(3.dp).background(Amber))
                 }

@@ -1,7 +1,6 @@
 package com.gamedraft.preview
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -54,6 +53,21 @@ private const val ArtworkHeight = 1536
 private const val WorkbenchTop = 106
 private const val WorkbenchHeight = 1386
 internal const val PartHoldMillis = 650
+internal const val StarterScrewdriverHoldMillis = 900
+
+internal data class WorkbenchHold(val part: ComputerPart, val screw: Screw? = null) {
+    data class Screw(val index: Int, val action: ScrewAction)
+
+    val durationMillis: Int
+        get() = if (screw == null) PartHoldMillis else StarterScrewdriverHoldMillis
+
+    val label: String
+        get() {
+            val fastener = screw ?: return part.label
+            val suffix = if (fastener.action == ScrewAction.Tighten) "螺丝孔" else "螺丝"
+            return "${part.label}$suffix ${fastener.index + 1}"
+        }
+}
 
 internal data class WorkbenchArtwork(
     val emptyCase: ImageBitmap,
@@ -174,19 +188,10 @@ internal fun WorkbenchScene(
     overPlacementGuide: Boolean,
     onViewportChanged: (Rect) -> Unit,
     onSelect: (ComputerPart) -> Unit,
-    onHoldChanged: (ComputerPart, Boolean) -> Unit,
-    onRemove: (ComputerPart) -> Unit,
-    onUnscrew: (ComputerPart, Int) -> Unit,
+    onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
+    onHoldComplete: (WorkbenchHold) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val currentHoldChanged by rememberUpdatedState(onHoldChanged)
-    val currentRemove by rememberUpdatedState(onRemove)
-    val configuration = LocalViewConfiguration.current
-    val workbenchConfiguration = remember(configuration) {
-        object : ViewConfiguration by configuration {
-            override val longPressTimeoutMillis = PartHoldMillis.toLong()
-        }
-    }
     val visibleParts = ComputerPart.entries.filter(assembly::isVisible)
 
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
@@ -225,8 +230,9 @@ internal fun WorkbenchScene(
                         part.screws.forEachIndexed { index, screw ->
                             if (!assembly.hasScrew(part, index)) {
                                 drawScrewHole(screw)
-                            } else if (screwdriverSelected && assembly.canUnscrew(part, index)) {
-                                drawScrewHighlight(screw)
+                            }
+                            if (screwdriverSelected) {
+                                assembly.screwAction(part, index)?.let { drawScrewHighlight(screw, it) }
                             }
                         }
                     }
@@ -240,51 +246,29 @@ internal fun WorkbenchScene(
                 }
             }
             // Parts use the same stacking order for drawing and hit testing.
-            CompositionLocalProvider(LocalViewConfiguration provides workbenchConfiguration) {
-                for (part in visibleParts) {
-                    key(part) {
-                        Box(
-                            Modifier.positionOnScene(partArtwork.getValue(part).hitArea)
-                                .semantics {
-                                    contentDescription = part.label
-                                    role = Role.Button
-                                    onClick {
-                                        onSelect(part)
-                                        true
-                                    }
-                                    onLongClick {
-                                        onRemove(part)
-                                        true
-                                    }
-                                }
-                                .pointerInput(part) {
-                                    detectTapGestures(
-                                        onPress = {
-                                            currentHoldChanged(part, true)
-                                            try {
-                                                tryAwaitRelease()
-                                            } finally {
-                                                currentHoldChanged(part, false)
-                                            }
-                                        },
-                                        onLongPress = { currentRemove(part) },
-                                    )
-                                },
-                        )
-                    }
+            for (part in visibleParts) {
+                key(part) {
+                    HoldZone(
+                        target = WorkbenchHold(part),
+                        modifier = Modifier.positionOnScene(partArtwork.getValue(part).hitArea),
+                        onSelect = onSelect,
+                        onHoldChanged = onHoldChanged,
+                        onHoldComplete = onHoldComplete,
+                    )
                 }
             }
             if (screwdriverSelected) {
                 for (part in visibleParts) {
                     part.screws.forEachIndexed { index, screw ->
-                        if (assembly.canUnscrew(part, index)) {
-                            key(part, index) {
-                                Box(
-                                    Modifier.positionOnScene(screwArea(screw, 34))
-                                        .semantics { contentDescription = "${part.label}螺丝 ${index + 1}" }
-                                        .clickable(interactionSource = null, indication = null, role = Role.Button) {
-                                            onUnscrew(part, index)
-                                        },
+                        val action = assembly.screwAction(part, index)
+                        if (action != null) {
+                            key(part, index, action) {
+                                HoldZone(
+                                    target = WorkbenchHold(part, WorkbenchHold.Screw(index, action)),
+                                    modifier = Modifier.positionOnScene(screwArea(screw, 34)),
+                                    onSelect = onSelect,
+                                    onHoldChanged = onHoldChanged,
+                                    onHoldComplete = onHoldComplete,
                                 )
                             }
                         }
@@ -292,6 +276,54 @@ internal fun WorkbenchScene(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HoldZone(
+    target: WorkbenchHold,
+    modifier: Modifier,
+    onSelect: (ComputerPart) -> Unit,
+    onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
+    onHoldComplete: (WorkbenchHold) -> Unit,
+) {
+    val currentHoldChanged by rememberUpdatedState(onHoldChanged)
+    val currentHoldComplete by rememberUpdatedState(onHoldComplete)
+    val base = LocalViewConfiguration.current
+    val configuration = remember(base, target.durationMillis) {
+        object : ViewConfiguration by base {
+            override val longPressTimeoutMillis = target.durationMillis.toLong()
+        }
+    }
+    CompositionLocalProvider(LocalViewConfiguration provides configuration) {
+        Box(
+            modifier
+                .semantics {
+                    contentDescription = target.label
+                    role = Role.Button
+                    onClick {
+                        onSelect(target.part)
+                        true
+                    }
+                    onLongClick {
+                        onHoldComplete(target)
+                        true
+                    }
+                }
+                .pointerInput(target) {
+                    detectTapGestures(
+                        onPress = {
+                            currentHoldChanged(target, true)
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                currentHoldChanged(target, false)
+                            }
+                        },
+                        onLongPress = { currentHoldComplete(target) },
+                    )
+                },
+        )
     }
 }
 
@@ -416,9 +448,9 @@ private fun DrawScope.drawScrewHole(screw: MountingScrew) {
     drawRect(Color(0xFF100F13), hole.topLeft, hole.size)
 }
 
-private fun DrawScope.drawScrewHighlight(screw: MountingScrew) {
+private fun DrawScope.drawScrewHighlight(screw: MountingScrew, action: ScrewAction) {
     val ring = screwArea(screw, screw.radius + 8)
-    val color = Color(0xFFFFC064)
+    val color = if (action == ScrewAction.Tighten) Color(0xFF7ED5C9) else Color(0xFFFFC064)
     drawRect(color.copy(alpha = 0.25f), ring.topLeft, ring.size)
     drawRect(color, ring.topLeft, ring.size, style = Stroke(width = 5f))
 }
