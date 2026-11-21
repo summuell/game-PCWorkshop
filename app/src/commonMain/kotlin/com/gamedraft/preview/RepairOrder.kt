@@ -21,8 +21,8 @@ internal data class CustomerPart(
 )
 
 internal object StarterOrder {
-    const val title = "显卡线路松动"
-    const val request = "搬动主机后，显卡供电线接触不良。请重新拔插显卡供电线，再把电脑组装好交还。"
+    const val title = "开机后显示器无信号"
+    const val request = "按下电源键后，主机风扇会转，显示器一直提示无信号。"
 
     val originalParts = ComputerPart.entries.associateWith { part ->
         val specification = when (part) {
@@ -37,9 +37,21 @@ internal object StarterOrder {
     }
 }
 
-internal enum class DeliveryProblemType { UnresolvedFault, MissingParts, LooseScrews, BrokenParts, DowngradedParts }
+private val requiredStartupParts = listOf(
+    ComputerPart.PowerSupply,
+    ComputerPart.Motherboard,
+    ComputerPart.MotherboardCable,
+    ComputerPart.Processor,
+    ComputerPart.Cooler,
+    ComputerPart.SolidStateDrive,
+    ComputerPart.GraphicsCard,
+    ComputerPart.GraphicsCable,
+)
 
-internal data class DeliveryProblem(val type: DeliveryProblemType, val parts: List<ComputerPart> = emptyList())
+internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNormally: Boolean) {
+    val ready: Boolean
+        get() = partsIntact && startsNormally
+}
 
 internal data class RepairSession(
     val stage: OrderStage = OrderStage.Available,
@@ -64,31 +76,24 @@ internal data class RepairSession(
     fun turnScrew(part: ComputerPart, index: Int, action: ScrewAction): RepairSession =
         if (stage == OrderStage.Active) copy(assembly = assembly.turnScrew(part, index, action)) else this
 
-    fun deliveryProblems(): List<DeliveryProblem> {
-        val requiredParts = StarterOrder.originalParts
-        val installed = requiredParts.keys.filter { assembly.isInstalled(it) && it in parts }
-        return buildList {
-            if (!graphicsCableReseated || ComputerPart.GraphicsCable !in installed) {
-                add(DeliveryProblem(DeliveryProblemType.UnresolvedFault))
-            }
-            val missing = requiredParts.keys - installed.toSet()
-            if (missing.isNotEmpty()) add(DeliveryProblem(DeliveryProblemType.MissingParts, missing.toList()))
-
-            val unfastened = installed.filter { assembly.screwsRemaining(it) < it.screws.size }
-            if (unfastened.isNotEmpty()) add(DeliveryProblem(DeliveryProblemType.LooseScrews, unfastened))
-
-            val broken = installed.filter { !parts.getValue(it).working }
-            if (broken.isNotEmpty()) add(DeliveryProblem(DeliveryProblemType.BrokenParts, broken))
-
-            val downgraded = installed.filter { part ->
-                !parts.getValue(part).specification.meets(requiredParts.getValue(part).specification)
-            }
-            if (downgraded.isNotEmpty()) add(DeliveryProblem(DeliveryProblemType.DowngradedParts, downgraded))
+    fun deliveryRequirements(): DeliveryRequirements {
+        val partsIntact = StarterOrder.originalParts.all { (part, original) ->
+            val current = parts[part] ?: return@all false
+            assembly.isInstalled(part) && current.working &&
+                current.specification.meets(original.specification) &&
+                assembly.screwsRemaining(part) == part.screws.size
         }
+        val startsNormally = graphicsCableReseated &&
+            requiredStartupParts.all(::hasWorkingPart) &&
+            (hasWorkingPart(ComputerPart.MemoryLeft) || hasWorkingPart(ComputerPart.MemoryRight))
+        return DeliveryRequirements(partsIntact, startsNormally)
     }
 
+    private fun hasWorkingPart(part: ComputerPart): Boolean =
+        assembly.isInstalled(part) && parts[part]?.working == true
+
     fun deliver(): RepairSession =
-        if (stage == OrderStage.Active && deliveryProblems().isEmpty()) {
+        if (stage == OrderStage.Active && deliveryRequirements().ready) {
             RepairSession(stage = OrderStage.Delivered)
         } else {
             this

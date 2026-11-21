@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gamedraft.preview.resources.Res
@@ -221,10 +222,10 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                 if (installed !== session) {
                     session = installed
                     selectedName = part.name.takeIf { part.screws.isNotEmpty() }
-                    feedback = when {
-                        part == ComputerPart.GraphicsCable -> "显卡供电线已重新插好"
-                        part.screws.isEmpty() -> "${part.label}已装回"
-                        else -> "零件已就位，用螺丝刀长按空孔"
+                    feedback = if (part.screws.isEmpty()) {
+                        "${part.label}已装回"
+                    } else {
+                        "零件已就位，用螺丝刀长按空孔"
                     }
                 }
             }
@@ -572,7 +573,13 @@ internal fun GameButton(
 }
 
 @Composable
-internal fun GameText(text: String, modifier: Modifier = Modifier, fontSize: Int = 16, color: Color = TextColor) {
+internal fun GameText(
+    text: String,
+    modifier: Modifier = Modifier,
+    fontSize: Int = 16,
+    color: Color = TextColor,
+    textDecoration: TextDecoration? = null,
+) {
     BasicText(
         text = text,
         modifier = modifier,
@@ -582,6 +589,7 @@ internal fun GameText(text: String, modifier: Modifier = Modifier, fontSize: Int
             fontWeight = FontWeight.Bold,
             fontSize = fontSize.sp,
             lineHeight = (fontSize + 5).sp,
+            textDecoration = textDecoration,
         ),
     )
 }
