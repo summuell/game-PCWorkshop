@@ -41,8 +41,9 @@ internal enum class StartupStage(val durationMillis: Long) {
     Power(420),
     SelfTest(640),
     Video(540),
-    BootDrive(580),
-    SystemLoading(1000),
+    BootDrive(900),
+    SystemLoading(2100),
+    Welcome(950),
     Desktop(0),
 }
 

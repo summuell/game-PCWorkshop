@@ -261,9 +261,6 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     feedback = "主机已送到工作台"
                 }
             },
-            onTestStartup = {
-                if (session.stage == OrderStage.Active) startupTest = session
-            },
             onDeliver = {
                 val delivered = session.deliver()
                 if (delivered !== session) {
@@ -297,6 +294,11 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     screwdriverSelected = screwdriverSelected,
                     overPlacementGuide = overPlacementGuide,
                     onViewportChanged = { viewport = it },
+                    onPower = {
+                        holdingTarget = null
+                        draggedPart = null
+                        startupTest = session
+                    },
                     onSelect = ::selectPart,
                     onHoldChanged = ::changeHold,
                     onHoldComplete = ::finishHold,

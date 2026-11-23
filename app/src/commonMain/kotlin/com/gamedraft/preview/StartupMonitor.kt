@@ -1,6 +1,8 @@
 package com.gamedraft.preview
 
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -11,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
@@ -38,6 +40,9 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 private val MonitorFrame = Color(0xFF303F49)
 private val MonitorEdge = Color(0xFF71808A)
@@ -75,8 +80,8 @@ internal fun StartupMonitor(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GameText("开机检测", fontSize = 22, modifier = Modifier.semantics { heading() })
-            GameButton("返回交单", onClose)
+            GameText("显示器", fontSize = 22, modifier = Modifier.semantics { heading() })
+            GameButton("返回工作台", onClose)
         }
         Box(
             Modifier.fillMaxWidth().weight(1f).background(SlotBackground).border(1.dp, Border),
@@ -89,27 +94,19 @@ internal fun StartupMonitor(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Monitor(stage, stalled)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    for (step in StartupStage.entries) {
-                        if (step == StartupStage.Desktop) break
-                        val color = when {
-                            step < stage -> StartupGreen
-                            step == stage && stalled -> Amber
-                            step == stage -> MutedText
-                            else -> Border
-                        }
-                        Box(Modifier.weight(1f).height(4.dp).background(color))
-                    }
+                if (stalled || stage == StartupStage.Desktop) {
+                    GameText(
+                        when (stage) {
+                            StartupStage.Power -> "主机电源灯未亮"
+                            StartupStage.SelfTest -> "自检指示灯常亮"
+                            StartupStage.Video -> "主机风扇运转中"
+                            StartupStage.Desktop -> "开机检测通过"
+                            else -> "启动已暂停"
+                        },
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        color = if (stalled) MutedText else StartupGreen,
+                    )
                 }
-                GameText(
-                    stage.caption(stalled),
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                    color = when {
-                        stalled -> Amber
-                        stage == StartupStage.Desktop -> StartupGreen
-                        else -> MutedText
-                    },
-                )
             }
         }
     }
@@ -128,21 +125,36 @@ private fun Monitor(stage: StartupStage, stalled: Boolean) {
                 contentAlignment = Alignment.Center,
             ) {
                 when (stage) {
-                    StartupStage.Power, StartupStage.SelfTest, StartupStage.Video -> {
+                    StartupStage.Power, StartupStage.SelfTest, StartupStage.Video -> if (stalled) {
                         GameText(
-                            if (stalled) "无信号" else "等待信号",
+                            "无信号",
                             modifier = Modifier.background(Panel).border(1.dp, Border)
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
                             fontSize = 14,
-                            color = if (stalled) Amber else MutedText,
+                            color = MutedText,
                         )
                     }
                     StartupStage.BootDrive -> GameText(
-                        if (stalled) "未找到启动设备" else "正在读取启动设备",
+                        if (stalled) "未找到启动设备" else "固件自检完成",
+                        modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
                         fontSize = 14,
-                        color = if (stalled) Amber else StartupGreen,
+                        color = MutedText,
                     )
                     StartupStage.SystemLoading -> SystemLoading()
+                    StartupStage.Welcome -> Column(
+                        Modifier.fillMaxSize().background(Brush.verticalGradient(
+                            listOf(Color(0xFF294D69), Color(0xFF163746)),
+                        )),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                    ) {
+                        Canvas(Modifier.size(30.dp)) {
+                            drawCircle(MutedText, size.width * .19f, Offset(center.x, size.height * .26f))
+                            drawArc(MutedText, 180f, 180f, true, Offset(0f, size.height * .52f),
+                                Size(size.width, size.height * .75f))
+                        }
+                        GameText("欢迎", fontSize = 16)
+                    }
                     StartupStage.Desktop -> Desktop()
                 }
             }
@@ -161,15 +173,33 @@ private fun Monitor(stage: StartupStage, stalled: Boolean) {
 
 @Composable
 private fun SystemLoading() {
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        progress.animateTo(
-            1f,
-            tween(StartupStage.SystemLoading.durationMillis.toInt(), easing = LinearEasing),
-        )
-    }
-    Box(Modifier.widthIn(max = 150.dp).fillMaxWidth(0.52f).height(6.dp).background(Border)) {
-        Box(Modifier.fillMaxWidth(progress.value).fillMaxHeight().background(StartupGreen))
+    val transition = rememberInfiniteTransition()
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)),
+    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Canvas(Modifier.size(38.dp)) {
+            // Stepped mountain silhouette used as the system's boot emblem.
+            val tile = size.width / 10
+            for (row in 0..4) {
+                drawRect(Color(0xFF8FD9E1), Offset((4 - row) * tile, (2 + row) * tile),
+                    Size((1 + 2 * row) * tile, tile))
+            }
+            drawRect(Color(0xFF397789), Offset(4 * tile, 5 * tile), Size(4 * tile, tile))
+        }
+        Canvas(Modifier.size(18.dp)) {
+            for (dot in 0..5) {
+                val angle = (rotation - dot * 32) * PI / 180
+                drawCircle(Color.White.copy(alpha = 1f - dot * .14f), size.width * .075f,
+                    Offset(center.x + cos(angle).toFloat() * size.width * .39f,
+                        center.y + sin(angle).toFloat() * size.height * .39f))
+            }
+        }
     }
 }
 
@@ -202,13 +232,4 @@ private fun Desktop() {
         block(57, 38, 1, 1, StartupGreen)
         block(60, 38, 2, 1, MutedText)
     }
-}
-
-private fun StartupStage.caption(stalled: Boolean): String = when (this) {
-    StartupStage.Power -> if (stalled) "电源未响应" else "主机通电"
-    StartupStage.SelfTest -> if (stalled) "硬件自检未通过" else "硬件自检"
-    StartupStage.Video -> if (stalled) "视频输出无信号" else "等待视频输出"
-    StartupStage.BootDrive -> "查找启动设备"
-    StartupStage.SystemLoading -> "加载系统"
-    StartupStage.Desktop -> "开机检测通过"
 }

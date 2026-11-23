@@ -1,7 +1,14 @@
 package com.gamedraft.preview
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
@@ -40,6 +47,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import com.gamedraft.preview.resources.Res
 import com.gamedraft.preview.resources.workbench_assembled
@@ -196,6 +204,7 @@ internal fun WorkbenchScene(
     screwdriverSelected: Boolean,
     overPlacementGuide: Boolean,
     onViewportChanged: (Rect) -> Unit,
+    onPower: () -> Unit,
     onSelect: (ComputerPart) -> Unit,
     onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
     onHoldComplete: (WorkbenchHold) -> Unit,
@@ -285,6 +294,22 @@ internal fun WorkbenchScene(
                             }
                         }
                     }
+                }
+            }
+            if (assembly != null) {
+                Row(
+                    Modifier.align(Alignment.BottomEnd).padding(4.dp)
+                        .height(44.dp).background(Panel).border(2.dp, Border)
+                        .clickable(role = Role.Button, onClick = onPower).padding(horizontal = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Canvas(Modifier.size(16.dp)) {
+                        drawArc(Amber, -55f, 290f, false, Offset(size.width * .1f, size.height * .16f),
+                            Size(size.width * .8f, size.height * .8f), style = Stroke(2.dp.toPx()))
+                        drawLine(Amber, Offset(center.x, 0f), Offset(center.x, center.y), 2.dp.toPx())
+                    }
+                    GameText("开机", fontSize = 14)
                 }
             }
         }

@@ -29,7 +29,6 @@ internal fun WorkshopTablet(
     onPageChanged: (TabletPage) -> Unit,
     onClose: () -> Unit,
     onAccept: () -> Unit,
-    onTestStartup: () -> Unit,
     onDeliver: () -> Unit,
 ) {
     Column(
@@ -55,7 +54,7 @@ internal fun WorkshopTablet(
         ) {
             when (page) {
                 TabletPage.Orders -> OrderPage(session.stage, onAccept)
-                TabletPage.Delivery -> DeliveryPage(session, onTestStartup, onDeliver)
+                TabletPage.Delivery -> DeliveryPage(session, onDeliver)
             }
         }
     }
@@ -77,7 +76,7 @@ private fun OrderPage(stage: OrderStage, onAccept: () -> Unit) {
 }
 
 @Composable
-private fun DeliveryPage(session: RepairSession, onTestStartup: () -> Unit, onDeliver: () -> Unit) {
+private fun DeliveryPage(session: RepairSession, onDeliver: () -> Unit) {
     when (session.stage) {
         OrderStage.Available -> GameText("接单后可交付主机", color = MutedText)
         OrderStage.Delivered -> {
@@ -88,7 +87,6 @@ private fun DeliveryPage(session: RepairSession, onTestStartup: () -> Unit, onDe
             val requirements = session.deliveryRequirements()
             DeliveryRequirement("配件完好", requirements.partsIntact)
             DeliveryRequirement("正常启动", requirements.startsNormally)
-            GameButton("开机检测", onTestStartup, Modifier.fillMaxWidth(), primary = !requirements.startsNormally)
             GameButton("确认交付", onDeliver, Modifier.fillMaxWidth(), primary = true, enabled = requirements.ready)
         }
     }
