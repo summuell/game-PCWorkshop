@@ -4,6 +4,8 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -157,8 +159,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     val hasMachine = session.stage == OrderStage.Active
     val selection = selectedName?.let(ComputerPart::valueOf)
     val currentDrag = draggedPart
-    val overPlacementGuide = currentDrag != null && assembly.canInstall(currentDrag.part) &&
-        isOverPlacementGuide(currentDrag.part, viewport, currentDrag.position)
+    val hoveredSlot = currentDrag?.let { placementSlot(it.part, assembly, viewport, it.position) }
 
     fun selectPart(part: ComputerPart) {
         selectedName = part.name
@@ -215,11 +216,12 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
         draggedPart = null
         if (!released || tabletOpen) return
         val blocker = session.assembly.blockerFor(part)
+        val slot = placementSlot(part, session.assembly, viewport, active.position)
         when {
             blocker != null -> feedback = blocker.instruction
-            !isOverPlacementGuide(part, viewport, active.position) -> feedback = "拖到提示框内再松手"
+            slot == null -> feedback = "拖到提示框内再松手"
             else -> {
-                val installed = session.install(part)
+                val installed = session.install(part, slot)
                 if (installed !== session) {
                     session = installed
                     selectedName = part.name.takeIf { part.screws.isNotEmpty() }
@@ -292,7 +294,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     assembly = assembly.takeIf { hasMachine },
                     selectedPart = selection,
                     screwdriverSelected = screwdriverSelected,
-                    overPlacementGuide = overPlacementGuide,
+                    hoveredSlot = hoveredSlot,
                     onViewportChanged = { viewport = it },
                     onPower = {
                         holdingTarget = null
@@ -402,7 +404,7 @@ private fun ToolStrip(
         animationSpec = holding?.let { tween(it.durationMillis, easing = LinearEasing) } ?: snap(),
     )
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 80.dp).background(Panel).padding(horizontal = 14.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().height(90.dp).background(Panel).padding(horizontal = 14.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -417,7 +419,7 @@ private fun ToolStrip(
                 ScrewdriverThumbnail(artwork, Modifier.size(width = 29.dp, height = 32.dp))
             }
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             if (selection != null) {
                 GameText(selection.label, fontSize = 16)
             } else {

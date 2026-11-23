@@ -94,18 +94,20 @@ internal fun StartupMonitor(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Monitor(stage, stalled)
-                if (stalled || stage == StartupStage.Desktop) {
-                    GameText(
-                        when (stage) {
-                            StartupStage.Power -> "主机电源灯未亮"
-                            StartupStage.SelfTest -> "自检指示灯常亮"
-                            StartupStage.Video -> "主机风扇运转中"
-                            StartupStage.Desktop -> "开机检测通过"
-                            else -> "启动已暂停"
-                        },
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                        color = if (stalled) MutedText else StartupGreen,
-                    )
+                Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.TopCenter) {
+                    if (stalled || stage == StartupStage.Desktop) {
+                        GameText(
+                            when (stage) {
+                                StartupStage.Power -> "主机电源灯未亮"
+                                StartupStage.SelfTest -> "主机指示灯常亮"
+                                StartupStage.Video -> "主机风扇运转中"
+                                StartupStage.Desktop -> "开机检测通过"
+                                else -> "启动已暂停"
+                            },
+                            modifier = Modifier.verticalScroll(rememberScrollState()).semantics { liveRegion = LiveRegionMode.Polite },
+                            color = if (stalled) MutedText else StartupGreen,
+                        )
+                    }
                 }
             }
         }
@@ -134,12 +136,9 @@ private fun Monitor(stage: StartupStage, stalled: Boolean) {
                             color = MutedText,
                         )
                     }
-                    StartupStage.BootDrive -> GameText(
-                        if (stalled) "未找到启动设备" else "固件自检完成",
-                        modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
-                        fontSize = 14,
-                        color = MutedText,
-                    )
+                    StartupStage.BootDrive -> if (stalled) {
+                        Box(Modifier.align(Alignment.TopStart).padding(12.dp).size(8.dp, 2.dp).background(MutedText))
+                    }
                     StartupStage.SystemLoading -> SystemLoading()
                     StartupStage.Welcome -> Column(
                         Modifier.fillMaxSize().background(Brush.verticalGradient(

@@ -154,7 +154,7 @@ private val partArtwork = mapOf(
         hitArea = bounds(489, 369, 538, 704),
     ),
     ComputerPart.MemoryRight to PartArtwork(
-        bounds(542, 374, 580, 701),
+        bounds(542, 374, 581, 701),
         hitArea = bounds(538, 369, 586, 704),
     ),
     ComputerPart.Cooler to PartArtwork(
@@ -202,7 +202,7 @@ internal fun WorkbenchScene(
     assembly: ComputerAssembly?,
     selectedPart: ComputerPart?,
     screwdriverSelected: Boolean,
-    overPlacementGuide: Boolean,
+    hoveredSlot: ComputerPart?,
     onViewportChanged: (Rect) -> Unit,
     onPower: () -> Unit,
     onSelect: (ComputerPart) -> Unit,
@@ -260,7 +260,9 @@ internal fun WorkbenchScene(
                             if (assembly.isVisible(selectedPart)) {
                                 drawPartHighlight(selectedPart)
                             } else if (assembly.canInstall(selectedPart)) {
-                                drawPlacementGuide(selectedPart, overPlacementGuide)
+                                for (slot in selectedPart.compatibleSlots.filter(assembly::canInstall)) {
+                                    drawPlacementGuide(slot, slot == hoveredSlot)
+                                }
                             }
                         }
                     }
@@ -364,11 +366,11 @@ private fun HoldZone(
     }
 }
 
-internal fun isOverPlacementGuide(part: ComputerPart, viewport: Rect?, position: Offset): Boolean {
-    if (viewport == null || !viewport.contains(position)) return false
+internal fun placementSlot(part: ComputerPart, assembly: ComputerAssembly, viewport: Rect?, position: Offset): ComputerPart? {
+    if (viewport == null || !viewport.contains(position)) return null
     val local = position - viewport.topLeft
     val point = Offset(local.x * ArtworkWidth / viewport.width, WorkbenchTop + local.y * WorkbenchHeight / viewport.height)
-    return placementArea(part).contains(point)
+    return part.compatibleSlots.firstOrNull { assembly.canInstall(it) && placementArea(it).contains(point) }
 }
 
 @Composable
@@ -437,6 +439,13 @@ private fun DrawScope.drawSheet(image: ImageBitmap) {
 
 private fun DrawScope.drawPart(artwork: WorkbenchArtwork, part: ComputerPart) {
     val art = partArtwork.getValue(part)
+    if (part == ComputerPart.MemoryRight) {
+        val source = partArtwork.getValue(ComputerPart.MemoryLeft).bounds
+        withTransform({ translate(art.bounds.left - source.left, art.bounds.top - source.top) }) {
+            drawPart(artwork, ComputerPart.MemoryLeft)
+        }
+        return
+    }
     if (part == ComputerPart.Processor) {
         drawProcessor(art.bounds)
         return
@@ -486,7 +495,10 @@ private fun DrawScope.drawPartHighlight(part: ComputerPart) {
     }
 }
 
-private fun placementArea(part: ComputerPart): Rect = partArtwork.getValue(part).hitArea.inflate(18f)
+private fun placementArea(part: ComputerPart): Rect {
+    val area = partArtwork.getValue(part).hitArea
+    return if (part == ComputerPart.MemoryLeft || part == ComputerPart.MemoryRight) area else area.inflate(18f)
+}
 
 private fun DrawScope.drawPlacementGuide(part: ComputerPart, overGuide: Boolean) {
     val frame = placementArea(part)

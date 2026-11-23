@@ -79,10 +79,19 @@ internal data class RepairSession(
     fun remove(part: ComputerPart): RepairSession =
         if (stage == OrderStage.Active) withAssembly(assembly.remove(part)) else this
 
-    fun install(part: ComputerPart): RepairSession {
-        if (stage != OrderStage.Active || !assembly.canInstall(part) || part !in parts) return this
+    fun install(part: ComputerPart, slot: ComputerPart = part): RepairSession {
+        if (stage != OrderStage.Active || part !in assembly.inventory || part !in parts ||
+            slot !in part.compatibleSlots || !assembly.canInstall(slot)) return this
+        // Slots also identify inventory entries. Move the other loose stick to the vacated key.
+        val installedParts = if (part == slot) parts else {
+            (parts - part - slot).toMutableMap().apply {
+                put(slot, parts.getValue(part))
+                parts[slot]?.let { put(part, it) }
+            }
+        }
         return copy(
-            assembly = assembly.install(part),
+            assembly = assembly.install(slot),
+            parts = installedParts,
             graphicsCableReseated = graphicsCableReseated || part == ComputerPart.GraphicsCable,
             startupVerifiedFor = null,
         )

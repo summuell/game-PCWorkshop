@@ -29,8 +29,8 @@ internal enum class ComputerPart(val label: String, val screws: List<MountingScr
         listOf(MountingScrew(579, 1056), MountingScrew(768, 1056), MountingScrew(577, 1199), MountingScrew(768, 1207)),
     ),
     SolidStateDrive("固态硬盘", listOf(MountingScrew(493, 898, 10))),
-    MemoryLeft("内存 A"),
-    MemoryRight("内存 B"),
+    MemoryLeft("内存条"),
+    MemoryRight("内存条"),
     Cooler(
         "散热器",
         listOf(MountingScrew(269, 423, 12), MountingScrew(469, 423, 12),
@@ -45,6 +45,12 @@ internal enum class ComputerPart(val label: String, val screws: List<MountingScr
         listOf(MountingScrew(183, 320, 14), MountingScrew(790, 320, 14),
             MountingScrew(183, 1204, 14), MountingScrew(790, 1204, 14)),
     );
+
+    val compatibleSlots: List<ComputerPart>
+        get() = when (this) {
+            MemoryLeft, MemoryRight -> listOf(MemoryLeft, MemoryRight)
+            else -> listOf(this)
+        }
 
     val mounts: List<ComputerPart>
         get() = when (this) {
