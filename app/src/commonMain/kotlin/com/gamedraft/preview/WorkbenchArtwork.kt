@@ -127,16 +127,6 @@ private val partArtwork = mapOf(
             164 to 737, 155 to 721, 155 to 404, 170 to 404),
     ),
     ComputerPart.Processor to PartArtwork(bounds(315, 492, 435, 621)),
-    ComputerPart.FrontFanUpper to PartArtwork(
-        bounds(715, 341, 815, 632),
-        outline(764 to 341, 806 to 341, 813 to 357, 813 to 604, 804 to 629, 727 to 629,
-            720 to 615, 720 to 366),
-    ),
-    ComputerPart.FrontFanLower to PartArtwork(
-        bounds(715, 635, 816, 934),
-        outline(761 to 635, 808 to 635, 814 to 650, 814 to 913, 805 to 932, 727 to 932,
-            720 to 913, 720 to 654),
-    ),
     ComputerPart.PowerSupply to PartArtwork(bounds(154, 1004, 447, 1243)),
     ComputerPart.HardDrive to PartArtwork(
         bounds(531, 1039, 790, 1224),
@@ -204,8 +194,7 @@ internal fun WorkbenchScene(
     screwdriverSelected: Boolean,
     hoveredSlot: ComputerPart?,
     onViewportChanged: (Rect) -> Unit,
-    computerOn: Boolean,
-    onPower: () -> Unit,
+    onOpenMonitor: () -> Unit,
     onSelect: (ComputerPart) -> Unit,
     onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
     onHoldComplete: (WorkbenchHold) -> Unit,
@@ -303,16 +292,17 @@ internal fun WorkbenchScene(
                 Row(
                     Modifier.align(Alignment.BottomEnd).padding(4.dp)
                         .height(44.dp).background(Panel).border(2.dp, Border)
-                        .clickable(role = Role.Button, onClick = onPower).padding(horizontal = 10.dp),
+                        .clickable(role = Role.Button, onClick = onOpenMonitor).padding(horizontal = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Canvas(Modifier.size(16.dp)) {
-                        drawArc(Amber, -55f, 290f, false, Offset(size.width * .1f, size.height * .16f),
-                            Size(size.width * .8f, size.height * .8f), style = Stroke(2.dp.toPx()))
-                        drawLine(Amber, Offset(center.x, 0f), Offset(center.x, center.y), 2.dp.toPx())
+                        val stroke = 1.5.dp.toPx()
+                        drawRect(Amber, Offset(stroke / 2, stroke / 2),
+                            Size(size.width - stroke, size.height * .68f), style = Stroke(stroke))
+                        drawLine(Amber, Offset(center.x, size.height * .76f), Offset(center.x, size.height), stroke)
                     }
-                    GameText(if (computerOn) "显示器" else "开机", fontSize = 14)
+                    GameText("开机检测", fontSize = 14)
                 }
             }
         }

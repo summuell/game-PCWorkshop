@@ -1,5 +1,9 @@
 package com.gamedraft.preview
 
+import kotlin.random.Random
+
+private const val MinimumWorkingDurability = 50
+
 internal enum class OrderStage { Available, Active, Delivered }
 
 internal data class HardwareSpecification(
@@ -17,8 +21,11 @@ internal data class HardwareSpecification(
 
 internal data class CustomerPart(
     val specification: HardwareSpecification,
-    val working: Boolean = true,
-)
+    val durability: Int = 100,
+) {
+    val working: Boolean
+        get() = durability >= MinimumWorkingDurability
+}
 
 internal object StarterOrder {
     const val title = "开机后显示器无信号"
@@ -35,6 +42,11 @@ internal object StarterOrder {
         }
         CustomerPart(specification)
     }
+
+    fun createParts(savedDurability: Map<String, Int> = emptyMap()): Map<ComputerPart, CustomerPart> =
+        originalParts.mapValues { (part, original) ->
+            original.copy(durability = savedDurability[part.name] ?: Random.nextInt(MinimumWorkingDurability, 101))
+        }
 }
 
 internal enum class StartupStage(val durationMillis: Long) {
@@ -54,6 +66,7 @@ internal data class HardwareConfiguration(
 )
 
 private const val StartupVerifiedMarker = "StartupVerified"
+private const val DurabilityPrefix = "Durability:"
 
 internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNormally: Boolean) {
     val ready: Boolean
@@ -74,7 +87,11 @@ internal data class RepairSession(
         get() = startupVerifiedFor == hardware
 
     fun accept(): RepairSession =
-        if (stage == OrderStage.Available) RepairSession(stage = OrderStage.Active) else this
+        if (stage == OrderStage.Available) {
+            RepairSession(stage = OrderStage.Active, parts = StarterOrder.createParts())
+        } else {
+            this
+        }
 
     fun remove(part: ComputerPart): RepairSession =
         if (stage == OrderStage.Active) withAssembly(assembly.remove(part)) else this
@@ -148,7 +165,11 @@ internal data class RepairSession(
     fun save(): List<String> = buildList {
         add(stage.name)
         add(graphicsCableReseated.toString())
-        if (startupVerified && parts == StarterOrder.originalParts) add(StartupVerifiedMarker)
+        val originalSpecifications = parts.keys == StarterOrder.originalParts.keys && parts.all { (slot, part) ->
+            part.specification == StarterOrder.originalParts.getValue(slot).specification
+        }
+        if (startupVerified && originalSpecifications) add(StartupVerifiedMarker)
+        for ((slot, part) in parts) add("$DurabilityPrefix${slot.name}:${part.durability}")
         addAll(assembly.save())
     }
 
@@ -157,10 +178,18 @@ internal data class RepairSession(
             val stage = OrderStage.entries.firstOrNull { it.name == entries.firstOrNull() } ?: return RepairSession()
             if (stage != OrderStage.Active) return RepairSession(stage = stage)
             val startupVerified = entries.getOrNull(2) == StartupVerifiedMarker
+            val (durabilityEntries, assemblyEntries) = entries.drop(if (startupVerified) 3 else 2)
+                .partition { it.startsWith(DurabilityPrefix) }
+            val durability = durabilityEntries.mapNotNull { entry ->
+                val value = entry.substringAfterLast(':').toIntOrNull()?.takeIf { it in 0..100 }
+                    ?: return@mapNotNull null
+                entry.removePrefix(DurabilityPrefix).substringBefore(':') to value
+            }.toMap()
             val session = RepairSession(
                 stage = stage,
-                assembly = ComputerAssembly.restore(entries.drop(if (startupVerified) 3 else 2)),
+                assembly = ComputerAssembly.restore(assemblyEntries),
                 graphicsCableReseated = entries.getOrNull(1) == "true",
+                parts = StarterOrder.createParts(durability),
             )
             return if (startupVerified) session.recordSuccessfulStartup() else session
         }

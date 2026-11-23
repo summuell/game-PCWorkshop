@@ -89,6 +89,7 @@ private val SessionSaver = listSaver<RepairSession, String>(
 )
 
 private data class InventoryDrag(val part: ComputerPart, val position: Offset)
+private val InventorySlotHeight = 72.dp
 
 @Composable
 fun WorkshopGame() {
@@ -159,7 +160,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     var screenOrigin by remember { mutableStateOf(Offset.Zero) }
     val assembly = session.assembly
     val hasMachine = session.stage == OrderStage.Active
-    val selection = selectedName?.let(ComputerPart::valueOf)
+    val selection = ComputerPart.entries.firstOrNull { it.name == selectedName }
     val currentDrag = draggedPart
     val hoveredSlot = currentDrag?.let { placementSlot(it.part, assembly, viewport, it.position) }
 
@@ -285,11 +286,9 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     screwdriverSelected = screwdriverSelected,
                     hoveredSlot = hoveredSlot,
                     onViewportChanged = { viewport = it },
-                    computerOn = power.requested,
-                    onPower = {
+                    onOpenMonitor = {
                         holdingTarget = null
                         draggedPart = null
-                        if (!power.requested) power.start()
                         monitorOpen = true
                     },
                     onSelect = ::selectPart,
@@ -323,6 +322,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                 Inventory(
                     artwork = artwork,
                     parts = assembly.inventory,
+                    customerParts = session.parts,
                     selection = selection,
                     onSelect = ::selectPart,
                     onMove = ::moveInventoryPart,
@@ -466,6 +466,7 @@ private fun ToolSlot(
 private fun Inventory(
     artwork: WorkbenchArtwork,
     parts: List<ComputerPart>,
+    customerParts: Map<ComputerPart, CustomerPart>,
     selection: ComputerPart?,
     onSelect: (ComputerPart) -> Unit,
     onMove: (ComputerPart, Offset) -> Unit,
@@ -485,15 +486,15 @@ private fun Inventory(
         }
         if (parts.isEmpty()) {
             Box(
-                Modifier.fillMaxWidth().height(72.dp).background(SlotBackground).border(1.dp, Border),
+                Modifier.fillMaxWidth().height(InventorySlotHeight).background(SlotBackground).border(1.dp, Border),
                 contentAlignment = Alignment.Center,
             ) {
                 GameText("拆下的零件会放在这里", fontSize = 14, color = MutedText)
             }
         } else {
-            LazyRow(Modifier.fillMaxWidth().height(72.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            LazyRow(Modifier.fillMaxWidth().height(InventorySlotHeight), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 items(parts, key = { it.name }) { part ->
-                    InventorySlot(artwork, part, part == selection, onSelect, onMove, onFinish)
+                    InventorySlot(artwork, part, customerParts.getValue(part), part == selection, onSelect, onMove, onFinish)
                 }
             }
         }
@@ -504,6 +505,7 @@ private fun Inventory(
 private fun InventorySlot(
     artwork: WorkbenchArtwork,
     part: ComputerPart,
+    condition: CustomerPart,
     active: Boolean,
     onSelect: (ComputerPart) -> Unit,
     onMove: (ComputerPart, Offset) -> Unit,
@@ -515,7 +517,7 @@ private fun InventorySlot(
     Column(
         Modifier
             .width(92.dp)
-            .height(72.dp)
+            .height(InventorySlotHeight)
             .background(if (active) Color(0xFF302820) else SlotBackground)
             .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
             .onGloballyPositioned { coordinates = it }
@@ -551,9 +553,10 @@ private fun InventorySlot(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PartThumbnail(artwork, part, Modifier.size(width = 60.dp, height = 33.dp))
-        Spacer(Modifier.height(5.dp))
+        PartThumbnail(artwork, part, Modifier.size(width = 60.dp, height = 23.dp))
+        Spacer(Modifier.height(2.dp))
         GameText(part.label, fontSize = 14)
+        GameText("耐久 ${condition.durability}/100", fontSize = 12, color = if (condition.working) MutedText else Amber)
     }
 }
 

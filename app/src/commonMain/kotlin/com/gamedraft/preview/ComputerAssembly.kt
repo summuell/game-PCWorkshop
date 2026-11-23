@@ -10,16 +10,6 @@ internal enum class ComputerPart(val label: String, val screws: List<MountingScr
         listOf(MountingScrew(622, 387), MountingScrew(228, 710), MountingScrew(213, 940), MountingScrew(538, 942)),
     ),
     Processor("处理器"),
-    FrontFanUpper(
-        "上风扇",
-        listOf(MountingScrew(733, 371, 8), MountingScrew(793, 354, 8),
-            MountingScrew(733, 607, 8), MountingScrew(788, 616, 8)),
-    ),
-    FrontFanLower(
-        "下风扇",
-        listOf(MountingScrew(733, 652, 8), MountingScrew(792, 648, 8),
-            MountingScrew(733, 911, 8), MountingScrew(788, 910, 8)),
-    ),
     PowerSupply(
         "电源",
         listOf(MountingScrew(191, 1039), MountingScrew(390, 1039), MountingScrew(191, 1227), MountingScrew(392, 1225)),
@@ -137,8 +127,12 @@ internal data class ComputerAssembly(
 
     companion object {
         fun restore(entries: List<String>): ComputerAssembly {
-            val inventory = entries.filterNot { ':' in it }.map(ComputerPart::valueOf)
-            val screws = entries.filter { ':' in it }.groupBy(
+            // Old saves can still contain removed case fans and their screw positions.
+            val currentParts = entries.filter { entry ->
+                ComputerPart.entries.any { it.name == entry.substringBefore(':') }
+            }
+            val inventory = currentParts.filterNot { ':' in it }.map(ComputerPart::valueOf)
+            val screws = currentParts.filter { ':' in it }.groupBy(
                 keySelector = { ComputerPart.valueOf(it.substringBefore(':')) },
                 valueTransform = { it.substringAfter(':').toInt() },
             )

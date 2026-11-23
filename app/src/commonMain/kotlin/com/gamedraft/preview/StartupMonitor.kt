@@ -42,7 +42,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CancellationException
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -51,6 +50,7 @@ private val MonitorFrame = Color(0xFF303F49)
 private val MonitorEdge = Color(0xFF71808A)
 private val MonitorGlass = Color(0xFF0C141B)
 private val StartupGreen = Color(0xFF7CE0A6)
+private const val ThermalShutdownMillis = 5000L
 
 internal class ComputerPower {
     var cycle by mutableStateOf(0L)
@@ -60,7 +60,6 @@ internal class ComputerPower {
     var powered by mutableStateOf(false)
     var stage by mutableStateOf(StartupStage.Power)
     var stalled by mutableStateOf(false)
-    var timingUnavailable by mutableStateOf(false)
 
     fun start() {
         stop()
@@ -73,7 +72,6 @@ internal class ComputerPower {
         powered = false
         stage = StartupStage.Power
         stalled = false
-        timingUnavailable = false
     }
 }
 
@@ -88,25 +86,13 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed:
             power.stop()
             return@LaunchedEffect
         }
+        power.powered = true
         if (!session.coolingAvailable) {
-            val timeout = try {
-                thermalShutdownDelayMillis()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                if (power.cycle == cycle) {
-                    power.stop()
-                    power.timingUnavailable = true
-                }
-                return@LaunchedEffect
-            }
-            if (power.cycle != cycle) return@LaunchedEffect
             launch {
-                delay(timeout)
+                delay(ThermalShutdownMillis)
                 if (power.cycle == cycle) power.stop()
             }
         }
-        power.powered = true
         for (step in StartupStage.entries) {
             if (power.cycle != cycle) return@LaunchedEffect
             power.stage = step
@@ -185,11 +171,7 @@ private fun Monitor(power: ComputerPower) {
                     .border(2.dp, Background),
                 contentAlignment = Alignment.Center,
             ) {
-                if (power.timingUnavailable) {
-                    GameText("随机服务暂不可用，请重试", fontSize = 14, color = MutedText)
-                } else if (power.requested && !power.powered) {
-                    GameText("正在准备开机", fontSize = 14, color = MutedText)
-                } else if (power.powered) when (stage) {
+                if (power.powered) when (stage) {
                     StartupStage.Power, StartupStage.SelfTest, StartupStage.Video -> if (stalled) {
                         GameText(
                             "无信号",
