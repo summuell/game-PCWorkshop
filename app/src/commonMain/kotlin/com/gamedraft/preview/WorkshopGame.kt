@@ -147,7 +147,9 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     var session by rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
     var tabletOpen by rememberSaveable { mutableStateOf(false) }
     var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
-    var startupTest by remember { mutableStateOf<RepairSession?>(null) }
+    var monitorOpen by remember { mutableStateOf(false) }
+    val power = remember(session.stage, session.assembly, session.parts, session.graphicsCableReseated) { ComputerPower() }
+    RunComputer(power, session) { session = session.recordSuccessfulStartup() }
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
     var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
@@ -197,10 +199,6 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
             feedback = "${part.label}已放入物品栏"
         } else {
             session = session.turnScrew(part, screw.index, screw.action)
-            if (screw.action == ScrewAction.Tighten) {
-                val emptyHoles = part.screws.size - session.assembly.screwsRemaining(part)
-                feedback = if (emptyHoles == 0) "螺丝已装齐" else "还需装回 $emptyHoles 颗螺丝"
-            }
         }
     }
 
@@ -235,17 +233,8 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
         }
     }
 
-    val testedSession = startupTest
-    if (testedSession != null) {
-        StartupMonitor(
-            stopAt = remember(testedSession) { testedSession.firstStartupFailure() },
-            onClose = { startupTest = null },
-            onPassed = {
-                if (startupTest === testedSession && session === testedSession) {
-                    session = testedSession.recordSuccessfulStartup()
-                }
-            },
-        )
+    if (monitorOpen) {
+        StartupMonitor(power, onClose = { monitorOpen = false })
         return
     }
 
@@ -296,10 +285,12 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                     screwdriverSelected = screwdriverSelected,
                     hoveredSlot = hoveredSlot,
                     onViewportChanged = { viewport = it },
+                    computerOn = power.requested,
                     onPower = {
                         holdingTarget = null
                         draggedPart = null
-                        startupTest = session
+                        if (!power.requested) power.start()
+                        monitorOpen = true
                     },
                     onSelect = ::selectPart,
                     onHoldChanged = ::changeHold,
@@ -380,7 +371,7 @@ private fun workbenchHint(
     if (!assembly.isInstalled(selection)) return "拖到提示框内松手"
     val screws = assembly.screwsRemaining(selection)
     return if (screws > 0) {
-        if (screwdriverSelected) "还剩 $screws 颗螺丝" else "用螺丝刀拆下 $screws 颗螺丝"
+        if (screwdriverSelected) "长按螺丝卸下" else "用螺丝刀卸下螺丝"
     } else if (screwdriverSelected && selection.screws.isNotEmpty()) {
         "长按部件取下，或长按空孔装螺丝"
     } else {

@@ -108,7 +108,6 @@ internal data class RepairSession(
             !hasWorkingPart(ComputerPart.MotherboardCable) -> StartupStage.Power
         !hasWorkingPart(ComputerPart.Motherboard) ||
             !hasWorkingPart(ComputerPart.Processor) ||
-            !hasWorkingPart(ComputerPart.Cooler) ||
             !(hasWorkingPart(ComputerPart.MemoryLeft) || hasWorkingPart(ComputerPart.MemoryRight)) -> StartupStage.SelfTest
         !graphicsCableReseated ||
             !hasWorkingPart(ComputerPart.GraphicsCard) ||
@@ -117,8 +116,10 @@ internal data class RepairSession(
         else -> null
     }
 
+    val coolingAvailable: Boolean get() = hasWorkingPart(ComputerPart.Cooler)
+
     fun recordSuccessfulStartup(): RepairSession =
-        if (stage == OrderStage.Active && firstStartupFailure() == null) {
+        if (stage == OrderStage.Active && coolingAvailable && firstStartupFailure() == null) {
             copy(startupVerifiedFor = hardware)
         } else {
             this

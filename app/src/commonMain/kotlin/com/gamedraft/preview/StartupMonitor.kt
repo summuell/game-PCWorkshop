@@ -34,12 +34,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -49,28 +52,76 @@ private val MonitorEdge = Color(0xFF71808A)
 private val MonitorGlass = Color(0xFF0C141B)
 private val StartupGreen = Color(0xFF7CE0A6)
 
-@Composable
-internal fun StartupMonitor(
-    stopAt: StartupStage?,
-    onClose: () -> Unit,
-    onPassed: () -> Unit,
-) {
-    var stage by remember { mutableStateOf(StartupStage.Power) }
-    var stalled by remember { mutableStateOf(false) }
-    val finishStartup by rememberUpdatedState(onPassed)
+internal class ComputerPower {
+    var cycle by mutableStateOf(0L)
+        private set
+    var requested by mutableStateOf(false)
+        private set
+    var powered by mutableStateOf(false)
+    var stage by mutableStateOf(StartupStage.Power)
+    var stalled by mutableStateOf(false)
+    var timingUnavailable by mutableStateOf(false)
 
-    LaunchedEffect(stopAt) {
+    fun start() {
+        stop()
+        requested = true
+    }
+
+    fun stop() {
+        cycle++
+        requested = false
+        powered = false
+        stage = StartupStage.Power
+        stalled = false
+        timingUnavailable = false
+    }
+}
+
+@Composable
+internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed: () -> Unit) {
+    val finishStartup by rememberUpdatedState(onPassed)
+    val cycle = power.cycle
+    LaunchedEffect(power, cycle) {
+        if (!power.requested) return@LaunchedEffect
+        val failure = session.firstStartupFailure()
+        if (failure == StartupStage.Power) {
+            power.stop()
+            return@LaunchedEffect
+        }
+        if (!session.coolingAvailable) {
+            val timeout = try {
+                thermalShutdownDelayMillis()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (power.cycle == cycle) {
+                    power.stop()
+                    power.timingUnavailable = true
+                }
+                return@LaunchedEffect
+            }
+            if (power.cycle != cycle) return@LaunchedEffect
+            launch {
+                delay(timeout)
+                if (power.cycle == cycle) power.stop()
+            }
+        }
+        power.powered = true
         for (step in StartupStage.entries) {
-            stage = step
+            if (power.cycle != cycle) return@LaunchedEffect
+            power.stage = step
             delay(step.durationMillis)
-            if (step == stopAt) {
-                stalled = true
+            if (step == failure) {
+                if (power.cycle == cycle) power.stalled = true
                 return@LaunchedEffect
             }
         }
-        finishStartup()
+        if (power.cycle == cycle && session.coolingAvailable) finishStartup()
     }
+}
 
+@Composable
+internal fun StartupMonitor(power: ComputerPower, onClose: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(12.dp).background(Panel).border(2.dp, Border).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -93,21 +144,27 @@ internal fun StartupMonitor(
                 verticalArrangement = Arrangement.spacedBy(18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Monitor(stage, stalled)
-                Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.TopCenter) {
-                    if (stalled || stage == StartupStage.Desktop) {
-                        GameText(
-                            when (stage) {
-                                StartupStage.Power -> "主机电源灯未亮"
-                                StartupStage.SelfTest -> "主机指示灯常亮"
-                                StartupStage.Video -> "主机风扇运转中"
-                                StartupStage.Desktop -> "开机检测通过"
-                                else -> "启动已暂停"
-                            },
-                            modifier = Modifier.verticalScroll(rememberScrollState()).semantics { liveRegion = LiveRegionMode.Polite },
-                            color = if (stalled) MutedText else StartupGreen,
-                        )
+                Monitor(power)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.height(46.dp).background(if (power.powered) Color(0xFF193D38) else Panel)
+                            .border(2.dp, if (power.powered) StartupGreen else Border)
+                            .semantics { stateDescription = if (power.powered) "已开机" else "已关机" }
+                            .clickable(role = Role.Button) { if (power.requested) power.stop() else power.start() }
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Canvas(Modifier.size(16.dp)) {
+                            val color = if (power.powered) StartupGreen else MutedText
+                            if (power.powered) drawCircle(StartupGreen.copy(alpha = .2f))
+                            drawArc(color, -55f, 290f, false, Offset(size.width * .1f, size.height * .16f),
+                                Size(size.width * .8f, size.height * .8f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                            drawLine(color, Offset(center.x, 0f), Offset(center.x, center.y), 2.dp.toPx())
+                        }
+                        GameText("电源", color = if (power.powered) StartupGreen else MutedText)
                     }
+                    GameButton("重启", power::start, enabled = power.powered)
                 }
             }
         }
@@ -115,7 +172,9 @@ internal fun StartupMonitor(
 }
 
 @Composable
-private fun Monitor(stage: StartupStage, stalled: Boolean) {
+private fun Monitor(power: ComputerPower) {
+    val stage = power.stage
+    val stalled = power.stalled
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Column(
             Modifier.fillMaxWidth().background(MonitorFrame).border(2.dp, MonitorEdge)
@@ -126,7 +185,11 @@ private fun Monitor(stage: StartupStage, stalled: Boolean) {
                     .border(2.dp, Background),
                 contentAlignment = Alignment.Center,
             ) {
-                when (stage) {
+                if (power.timingUnavailable) {
+                    GameText("随机服务暂不可用，请重试", fontSize = 14, color = MutedText)
+                } else if (power.requested && !power.powered) {
+                    GameText("正在准备开机", fontSize = 14, color = MutedText)
+                } else if (power.powered) when (stage) {
                     StartupStage.Power, StartupStage.SelfTest, StartupStage.Video -> if (stalled) {
                         GameText(
                             "无信号",
@@ -161,7 +224,7 @@ private fun Monitor(stage: StartupStage, stalled: Boolean) {
                 Modifier.fillMaxWidth().height(12.dp).padding(end = 4.dp),
                 contentAlignment = Alignment.CenterEnd,
             ) {
-                val led = if (stage >= StartupStage.BootDrive) StartupGreen else Amber
+                val led = if (power.powered && stage >= StartupStage.BootDrive) StartupGreen else Border
                 Box(Modifier.size(5.dp).background(led))
             }
         }

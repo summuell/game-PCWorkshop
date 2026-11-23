@@ -204,6 +204,7 @@ internal fun WorkbenchScene(
     screwdriverSelected: Boolean,
     hoveredSlot: ComputerPart?,
     onViewportChanged: (Rect) -> Unit,
+    computerOn: Boolean,
     onPower: () -> Unit,
     onSelect: (ComputerPart) -> Unit,
     onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
@@ -311,7 +312,7 @@ internal fun WorkbenchScene(
                             Size(size.width * .8f, size.height * .8f), style = Stroke(2.dp.toPx()))
                         drawLine(Amber, Offset(center.x, 0f), Offset(center.x, center.y), 2.dp.toPx())
                     }
-                    GameText("开机", fontSize = 14)
+                    GameText(if (computerOn) "显示器" else "开机", fontSize = 14)
                 }
             }
         }
