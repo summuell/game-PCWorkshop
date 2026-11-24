@@ -105,6 +105,8 @@ private data class InventoryDrag(val item: InventoryItem, val position: Offset)
 private val ToolSlotSize = 56.dp
 private val ToolGap = 8.dp
 private val RailPadding = 8.dp
+private val TabletButtonWidth = 42.dp
+private enum class BenchTool { Driver, Paste }
 
 @Composable
 internal fun WorkshopGame(
@@ -119,6 +121,8 @@ internal fun WorkshopGame(
     var loadGeneration by remember { mutableStateOf(0) }
     val focus = remember { FocusRequester() }
     registerBackHandler(!exited) { menuOpen = !menuOpen }
+    var tabletOpen by rememberSaveable { mutableStateOf(false) }
+    var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
     val sessionState = rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
     val font = FontFamily(Font(Res.font.screen_labels, FontWeight.Bold))
 
@@ -141,16 +145,39 @@ internal fun WorkshopGame(
                             GameButton("重新进入", { exited = false })
                         }
                     } else {
-                        if (started) key(loadGeneration) { WorkbenchScreen(sessionState, menuOpen) }
-                        else StartScreen(onStart = { onStartGame(); started = true })
-                        FloatingMenuButton { menuOpen = true }
-                        if (menuOpen) GameMenu(storage, sessionState.value, onClose = { menuOpen = false }, onHome = {
+                        if (started) key(loadGeneration) { WorkbenchScreen(sessionState, menuOpen, tabletOpen) }
+                        else StartScreen(onStart = {
                             if (sessionState.value.stage == OrderStage.Delivered) {
                                 sessionState.value = sessionState.value.copy(stage = OrderStage.Available)
                             }
+                            onStartGame()
+                            started = true
+                        })
+                        if (tabletOpen) {
+                            Box(Modifier.fillMaxSize().background(Background)) {
+                                Box(Modifier.matchParentSize().clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null) {})
+                                WorkshopTablet(sessionState.value, tabletPage, { tabletPage = it },
+                                    onClose = { tabletOpen = false },
+                                    onBuy = { sessionState.value = sessionState.value.buy(it) },
+                                    onReceive = { sessionState.value = sessionState.value.receive(it) },
+                                    onAccept = {
+                                        sessionState.value = sessionState.value.accept()
+                                        if (!started) onStartGame()
+                                        started = true
+                                        tabletOpen = false
+                                    },
+                                    onDeliver = { sessionState.value = sessionState.value.deliver() })
+                            }
+                        }
+                        FloatingMenuButton { menuOpen = true }
+                        if (menuOpen) GameMenu(storage, sessionState.value, onClose = { menuOpen = false }, onHome = {
+                            tabletOpen = false
                             started = false
                             menuOpen = false
                         }, onLoaded = {
+                            tabletOpen = false
                             sessionState.value = it
                             loadGeneration++
                             started = true
@@ -159,9 +186,23 @@ internal fun WorkshopGame(
                             started = false
                             menuOpen = false
                             sessionState.value = RepairSession()
+                            tabletOpen = false
                             exited = true
                             onExitGame()
                         })
+                        if (!tabletOpen || menuOpen) {
+                            Box(Modifier.align(Alignment.TopEnd)
+                                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End))
+                                .padding(end = RailPadding, top = RailPadding)
+                                .size(TabletButtonWidth).background(SlotBackground).border(1.dp, Border)
+                                .semantics { contentDescription = "平板电脑" }.clickable(role = Role.Button) {
+                                    menuOpen = false
+                                    if (!tabletOpen) {
+                                        tabletPage = if (sessionState.value.stage == OrderStage.Active) TabletPage.Delivery else TabletPage.Orders
+                                        tabletOpen = true
+                                    }
+                                }, contentAlignment = Alignment.Center) { TabletThumbnail(Modifier.size(27.dp)) }
+                        }
                     }
                 }
             }
@@ -216,18 +257,17 @@ private fun StartScreen(onStart: () -> Unit) {
 }
 
 @Composable
-private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<RepairSession>, paused: Boolean) {
+private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<RepairSession>, paused: Boolean, tabletOpen: Boolean) {
     val artwork = loadWorkbenchArtwork()
     var session by sessionState
-    var tabletOpen by rememberSaveable { mutableStateOf(false) }
-    var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
-    var monitorOpen by remember { mutableStateOf(false) }
-    val power = remember(session.stage, session.assembly) { ComputerPower() }
+    var monitorOpen by remember(session.stage) { mutableStateOf(false) }
+    val power = remember(session.stage, session.assembly, session.parts[ComputerPart.Processor]?.hasPaste) { ComputerPower() }
     RunComputer(power, session, paused, onPassed = { session = session.recordSuccessfulStartup() },
         onInstall = { disk -> session = session.finishInstallation(disk) })
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedItemId by rememberSaveable { mutableStateOf<Int?>(null) }
-    var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
+    var tool by rememberSaveable(session.stage) { mutableStateOf<BenchTool?>(null) }
+    val screwdriverSelected = tool == BenchTool.Driver
     var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
     var holdPoint by remember { mutableStateOf(Offset.Zero) }
@@ -305,34 +345,6 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
         return
     }
 
-    if (tabletOpen) {
-        WorkshopTablet(
-            session = session,
-            page = tabletPage,
-            onPageChanged = { tabletPage = it },
-            onClose = { tabletOpen = false },
-            onBuy = { session = session.buy(it) },
-            onReceive = { session = session.receive(it) },
-            onAccept = {
-                val accepted = session.accept()
-                if (accepted !== session) {
-                    session = accepted
-                    tabletOpen = false
-                }
-            },
-            onDeliver = {
-                val delivered = session.deliver()
-                if (delivered !== session) {
-                    session = delivered
-                    selectedName = null
-                    selectedItemId = null
-                    screwdriverSelected = false
-                }
-            },
-        )
-        return
-    }
-
     Box(
         Modifier.fillMaxSize().onGloballyPositioned { workbench = it },
     ) {
@@ -340,23 +352,27 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
             Box(Modifier.weight(1f).fillMaxSize()) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly.takeIf { hasMachine }, selection,
                     session.inventory.firstOrNull { it.id == selectedItemId }?.type,
-                    screwdriverSelected, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
+                    screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
+                    { session = session.applyPasteToMountedCpu() }, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
                     Modifier.fillMaxSize())
 
             }
             WorkshopControlRail("开机检测", if (hasMachine) ({ monitorOpen = true }) else null) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(ToolGap)) {
-                    ToolSlot("螺丝刀", { screwdriverSelected = !screwdriverSelected }, hasMachine, screwdriverSelected) {
+                    ToolSlot("螺丝刀", { tool = if (screwdriverSelected) null else BenchTool.Driver }, hasMachine, screwdriverSelected) {
                         ScrewdriverThumbnail(artwork, Modifier.size(38.dp))
                     }
-                    ToolSlot("平板", {
-                        tabletPage = if (hasMachine) TabletPage.Delivery else TabletPage.Orders
-                        tabletOpen = true
-                    }) { TabletThumbnail(Modifier.size(32.dp)) }
+                    ToolSlot("硅脂", { tool = if (tool == BenchTool.Paste) null else BenchTool.Paste },
+                        hasMachine || session.inventory.any { it.type == ComputerPart.Processor }, tool == BenchTool.Paste) {
+                        PasteThumbnail(Modifier.size(34.dp))
+                    }
                 }
                 Inventory(artwork, session.inventory, selectedItemId,
-                    ::selectItem, ::moveInventoryPart, ::finishInventoryDrag)
+                    { item ->
+                        selectItem(item)
+                        if (tool == BenchTool.Paste) session = session.applyPasteToItem(item.id)
+                    }, ::moveInventoryPart, ::finishInventoryDrag)
             }
         }
         holdingTarget?.let { target ->
@@ -399,7 +415,15 @@ internal fun WorkshopControlRail(
     Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End))
         .width(width).fillMaxHeight().border(1.dp, Border).padding(RailPadding),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (onSwitch != null) GameButton(switchLabel, onSwitch, Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth().height(TabletButtonWidth), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (onSwitch != null) {
+                Box(Modifier.weight(1f).fillMaxHeight().background(SlotBackground).border(1.dp, Border)
+                    .clickable(role = Role.Button, onClick = onSwitch), contentAlignment = Alignment.Center) {
+                    GameText(switchLabel, fontSize = 14)
+                }
+            }
+            Spacer(Modifier.width(TabletButtonWidth))
+        }
         content()
     }
 }
@@ -502,6 +526,7 @@ private fun InventorySlot(
         PartThumbnail(artwork, item.type, Modifier.size(width = 44.dp, height = 22.dp))
         Spacer(Modifier.height(2.dp))
         GameText(item.label, fontSize = 12)
+        if (item.part.hasPaste) GameText("已涂硅脂", fontSize = 11, color = Amber)
         GameText("耐久 ${item.part.durability}", fontSize = 11, color = if (item.part.working) MutedText else Amber)
     }
 }

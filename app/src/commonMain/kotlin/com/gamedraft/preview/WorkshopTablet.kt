@@ -50,7 +50,7 @@ internal fun WorkshopTablet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GameText("平板电脑", fontSize = 22, modifier = Modifier.semantics { heading() })
-            GameButton("工作台", onClose)
+            GameButton("返回", onClose)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GameButton("接单", { onPageChanged(TabletPage.Orders) }, Modifier.weight(1f), primary = page == TabletPage.Orders)
@@ -80,7 +80,7 @@ internal fun WorkshopTablet(
                         Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Column(Modifier.weight(1f)) {
-                                GameText(product.model)
+                                GameText(product.shopName)
                                 GameText(product.detail, fontSize = 13, color = MutedText)
                             }
                             GameText("测试价 ¥0", fontSize = 14, color = Amber)
@@ -93,7 +93,7 @@ internal fun WorkshopTablet(
                     for (order in session.purchases.asReversed()) {
                         Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                GameText(order.product.model)
+                                GameText(order.product.shopName)
                                 GameText("订单 #${order.number} · " + if (order.received) "已签收" else "已到货",
                                     fontSize = 13, color = MutedText)
                             }
@@ -111,7 +111,10 @@ private fun OrderPage(stage: OrderStage, onAccept: () -> Unit) {
     val status = when (stage) {
         OrderStage.Available -> "待接订单"
         OrderStage.Active -> "当前订单"
-        OrderStage.Delivered -> "已交付"
+        OrderStage.Delivered -> {
+            GameText("暂无待接订单", color = MutedText)
+            return
+        }
     }
     GameText(status, fontSize = 14, color = MutedText)
     GameText(StarterOrder.title, fontSize = 24, modifier = Modifier.semantics { heading() })

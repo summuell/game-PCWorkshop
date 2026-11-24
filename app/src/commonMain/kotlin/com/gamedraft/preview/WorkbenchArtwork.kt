@@ -1,5 +1,6 @@
 package com.gamedraft.preview
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.height
@@ -190,6 +191,9 @@ internal fun WorkbenchScene(
     selectedPart: ComputerPart?,
     placementPart: ComputerPart?,
     screwdriverSelected: Boolean,
+    pasteSelected: Boolean,
+    cpuHasPaste: Boolean,
+    onPaste: () -> Unit,
     hoveredSlot: ComputerPart?,
     onViewportChanged: (LayoutCoordinates) -> Unit,
     onSelect: (ComputerPart) -> Unit,
@@ -238,6 +242,14 @@ internal fun WorkbenchScene(
                         clipPath(ComputerCaseOutline) { drawSheet(artwork.emptyCase) }
                         for (part in visibleParts) {
                             drawPart(artwork, part)
+                            if (part == ComputerPart.Processor && cpuHasPaste) {
+                                val area = partArtwork.getValue(part).bounds
+                                val delta = Offset(area.width * .16f, area.height * .16f)
+                                val color = Color(0xFFECEBE1)
+                                drawLine(color, area.center - delta, area.center + delta, 7f)
+                                val cross = Offset(-delta.x, delta.y)
+                                drawLine(color, area.center - cross, area.center + cross, 7f)
+                            }
                             part.screws.forEachIndexed { index, screw ->
                                 if (!assembly.hasScrew(part, index)) {
                                     drawScrewHole(screw)
@@ -259,7 +271,11 @@ internal fun WorkbenchScene(
             // Parts use the same stacking order for drawing and hit testing.
             for (part in visibleParts) {
                 key(part) {
-                    HoldZone(
+                    if (pasteSelected && part == ComputerPart.Processor) {
+                        Box(Modifier.positionOnScene(partArtwork.getValue(part).hitArea)
+                            .semantics { contentDescription = "给处理器涂硅脂" }
+                            .clickable(role = Role.Button, onClick = onPaste))
+                    } else HoldZone(
                         target = WorkbenchHold(part),
                         modifier = Modifier.positionOnScene(partArtwork.getValue(part).hitArea),
                         onSelect = onSelect,
@@ -377,6 +393,24 @@ internal fun ScrewdriverThumbnail(artwork: WorkbenchArtwork, modifier: Modifier)
             fitArtwork(ScrewdriverBounds, center, size) {
                 clipPath(ScrewdriverOutline) { drawSheet(artwork.emptyCase) }
             }
+        }
+    }
+}
+
+@Composable
+internal fun PasteThumbnail(modifier: Modifier) {
+    Canvas(modifier) {
+        val u = size.minDimension / 24
+        fun bar(x: Int, y: Int, w: Int, h: Int, color: Color) =
+            drawRect(color, Offset(x*u, y*u), Size(w*u, h*u))
+        rotate(-40f) {
+            val metal = Color(0xFFCDD7DB)
+            bar(1, 11, 6, 2, metal)
+            bar(6, 9, 3, 6, Color(0xFF93A7AD))
+            bar(9, 8, 10, 8, metal)
+            bar(11, 8, 5, 8, Color(0xFF498E9C))
+            bar(19, 11, 3, 2, metal)
+            bar(22, 8, 2, 8, Amber)
         }
     }
 }

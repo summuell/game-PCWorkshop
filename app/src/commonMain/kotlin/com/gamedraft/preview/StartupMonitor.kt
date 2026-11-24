@@ -54,7 +54,6 @@ private val MonitorFrame = Color(0xFF303F49)
 private val MonitorEdge = Color(0xFF71808A)
 private val MonitorGlass = Color(0xFF0C141B)
 private val StartupGreen = Color(0xFF7CE0A6)
-private const val ThermalShutdownMillis = 5000L
 
 internal enum class BootSource { Disk, Usb }
 
@@ -136,8 +135,9 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: B
             return@LaunchedEffect
         }
         power.powered = true
-        if (!session.coolingAvailable) launch {
-            gameDelay(ThermalShutdownMillis, menuPaused)
+        val shutdownDelay = session.thermalShutdownMillis
+        if (shutdownDelay != null) launch {
+            gameDelay(shutdownDelay, menuPaused)
             if (power.cycle == cycle) power.stop()
         }
         for (step in StartupStage.entries) {

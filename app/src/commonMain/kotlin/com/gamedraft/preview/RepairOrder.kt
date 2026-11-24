@@ -26,6 +26,7 @@ internal data class CustomerPart(
     val durability: Int = 100,
     val system: DiskSystem = DiskSystem.Blank,
     val product: Product? = null,
+    val hasPaste: Boolean = false,
 ) {
     val working: Boolean
         get() = durability >= MinimumWorkingDurability
@@ -37,7 +38,8 @@ internal object StarterOrder {
 
     private val prototypes = ComputerPart.entries.associateWith { part ->
         val type = if (part == ComputerPart.MemoryRight) ComputerPart.MemoryLeft else part
-        Product.entries.firstOrNull { it.slot == type }?.newPart() ?: CustomerPart(HardwareSpecification())
+        val item = Product.entries.firstOrNull { it.slot == type }?.newPart() ?: CustomerPart(HardwareSpecification())
+        if (part == ComputerPart.Processor) item.copy(hasPaste = true) else item
     }
 
     val originalParts = (prototypes - ComputerPart.SolidStateDrive).mapValues { (slot, part) ->
@@ -136,7 +138,7 @@ internal data class RepairSession(
         if (stage != OrderStage.Active || !assembly.canRemove(part)) return this
         val instance = parts[part] ?: return this
         return copy(assembly = assembly.remove(part), parts = parts - part,
-            inventory = listOf(newItem(part, instance)) + inventory, startupVerifiedFor = null)
+            inventory = listOf(newItem(part, if (part == ComputerPart.Processor) instance.copy(hasPaste = false) else instance)) + inventory, startupVerifiedFor = null)
     }
 
     fun install(itemId: Int, slot: ComputerPart): RepairSession {
@@ -185,7 +187,26 @@ internal data class RepairSession(
             preferredDisk = disk, startupVerifiedFor = null)
     }
 
-    val coolingAvailable: Boolean get() = hasWorkingPart(ComputerPart.Cooler)
+    fun applyPasteToItem(id: Int): RepairSession {
+        val cpu = inventory.firstOrNull { it.id == id && it.type == ComputerPart.Processor && !it.part.hasPaste } ?: return this
+        return copy(inventory = inventory.map { if (it.id == id) cpu.copy(part = cpu.part.copy(hasPaste = true)) else it })
+    }
+
+    fun applyPasteToMountedCpu(): RepairSession {
+        val slot = ComputerPart.Processor
+        val cpu = parts[slot] ?: return this
+        if (stage != OrderStage.Active || !assembly.isVisible(slot) || cpu.hasPaste) return this
+        return copy(parts = parts + (slot to cpu.copy(hasPaste = true)), startupVerifiedFor = null)
+    }
+
+    val thermalShutdownMillis: Long?
+        get() = when {
+            !hasWorkingPart(ComputerPart.Cooler) -> 5_000L
+            parts[ComputerPart.Processor]?.hasPaste != true -> 10_000L
+            else -> null
+        }
+
+    val coolingAvailable: Boolean get() = thermalShutdownMillis == null
 
     fun recordSuccessfulStartup(): RepairSession =
         if (stage == OrderStage.Active && coolingAvailable && firstStartupFailure() == null) {
@@ -251,7 +272,7 @@ internal data class RepairSession(
                         )
                         "Purchase" -> purchases += Purchase(fields[1].toInt(), Product.valueOf(fields[2]), fields[3].toBoolean())
                         "Item" -> inventory += InventoryItem(fields[1].toInt(), ComputerPart.valueOf(fields[2]), decodePart(fields, 3))
-                        "Mounted" -> parts[ComputerPart.valueOf(fields[1])] = decodePart(fields, 2)
+                        "Mounted" -> parts[ComputerPart.valueOf(fields[1])] = decodePart(fields, 2, legacyPaste = fields[1] == ComputerPart.Processor.name)
                     }
                 }
                 val session = RepairSession(stage = stage, parts = parts, purchases = purchases, inventory = inventory,
@@ -280,7 +301,7 @@ internal data class RepairSession(
                 },
             )
             val loose = session.assembly.inventory.mapIndexed { index, type ->
-                InventoryItem(index + 1, type, session.parts.getValue(type))
+                InventoryItem(index + 1, type, session.parts.getValue(type).copy(hasPaste = false))
             }
             val mounted = session.parts.filterKeys(session.assembly::isInstalled)
             val migrated = session.copy(parts = mounted, inventory = loose,
@@ -302,10 +323,11 @@ private fun legacyDriveRequirement(parts: Map<ComputerPart, CustomerPart>, inven
 }
 
 private fun CustomerPart.encode(): String = with(specification) {
-    listOf(product?.name.orEmpty(), durability, system.name, performanceTier, capacityGb, memoryRateMt, powerWatts).joinToString("|")
+    listOf(product?.name.orEmpty(), durability, system.name, performanceTier, capacityGb, memoryRateMt, powerWatts, hasPaste).joinToString("|")
 }
 
-private fun decodePart(fields: List<String>, start: Int): CustomerPart {
+private fun decodePart(fields: List<String>, start: Int, legacyPaste: Boolean = false): CustomerPart {
     val spec = HardwareSpecification(fields[start+3].toInt(), fields[start+4].toInt(), fields[start+5].toInt(), fields[start+6].toInt())
-    return CustomerPart(spec, fields[start+1].toInt(), DiskSystem.valueOf(fields[start+2]), Product.entries.firstOrNull { it.name == fields[start] })
+    return CustomerPart(spec, fields[start+1].toInt(), DiskSystem.valueOf(fields[start+2]), Product.entries.firstOrNull { it.name == fields[start] },
+        fields.getOrNull(start+7)?.toBoolean() ?: legacyPaste)
 }
