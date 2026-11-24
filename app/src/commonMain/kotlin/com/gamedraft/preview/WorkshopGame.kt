@@ -134,7 +134,7 @@ internal fun WorkshopGame(
     val focus = remember { FocusRequester() }
     registerBackHandler(!exited) { menuOpen = !menuOpen }
     var tabletOpen by rememberSaveable { mutableStateOf(false) }
-    var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
+    var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Shop) }
     val sessionState = rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
     val font = FontFamily(Font(Res.font.screen_labels, FontWeight.Bold))
 
@@ -159,9 +159,6 @@ internal fun WorkshopGame(
                     } else {
                         if (started) key(loadGeneration) { WorkbenchScreen(sessionState, menuOpen, tabletOpen) }
                         else StartScreen(onStart = {
-                            if (sessionState.value.stage == OrderStage.Delivered) {
-                                sessionState.value = sessionState.value.copy(stage = OrderStage.Available)
-                            }
                             onStartGame()
                             started = true
                         })
@@ -173,14 +170,7 @@ internal fun WorkshopGame(
                                 WorkshopTablet(sessionState.value, tabletPage, { tabletPage = it },
                                     onClose = { tabletOpen = false },
                                     onBuy = { sessionState.value = sessionState.value.buy(it) },
-                                    onReceive = { sessionState.value = sessionState.value.receive(it) },
-                                    onAccept = {
-                                        sessionState.value = sessionState.value.accept()
-                                        if (!started) onStartGame()
-                                        started = true
-                                        tabletOpen = false
-                                    },
-                                    onDeliver = { sessionState.value = sessionState.value.deliver() })
+                                    onReceive = { sessionState.value = sessionState.value.receive(it) })
                             }
                         }
                         FloatingMenuButton { menuOpen = true }
@@ -209,10 +199,7 @@ internal fun WorkshopGame(
                                 .size(TabletButtonWidth).background(SlotBackground).border(1.dp, Border)
                                 .semantics { contentDescription = "平板电脑" }.clickable(role = Role.Button) {
                                     menuOpen = false
-                                    if (!tabletOpen) {
-                                        tabletPage = if (sessionState.value.stage == OrderStage.Active) TabletPage.Delivery else TabletPage.Orders
-                                        tabletOpen = true
-                                    }
+                                    tabletOpen = true
                                 }, contentAlignment = Alignment.Center) { TabletThumbnail(Modifier.size(27.dp)) }
                         }
                     }
@@ -272,25 +259,28 @@ private fun StartScreen(onStart: () -> Unit) {
 private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<RepairSession>, paused: Boolean, tabletOpen: Boolean) {
     val artwork = loadWorkbenchArtwork()
     var session by sessionState
-    var monitorOpen by remember(session.stage) { mutableStateOf(false) }
-    val power = remember(session.stage, session.assembly, session.parts[ComputerPart.Processor]?.hasPaste) { ComputerPower() }
-    RunComputer(power, session, paused, onPassed = { session = session.recordSuccessfulStartup() },
-        onInstall = { disk -> session = session.finishInstallation(disk) })
+    var monitorOpen by remember { mutableStateOf(false) }
+    val power = remember(session.assembly, session.parts[ComputerPart.Processor]?.hasPaste) { ComputerPower() }
+    RunComputer(power, session, paused, onInstall = { disk -> session = session.finishInstallation(disk) })
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedItemId by rememberSaveable { mutableStateOf<Int?>(null) }
-    var tool by rememberSaveable(session.stage) { mutableStateOf<BenchTool?>(null) }
+    var tool by rememberSaveable { mutableStateOf<BenchTool?>(null) }
     val screwdriverSelected = tool == BenchTool.Driver
     var press by remember { mutableStateOf<WorkbenchPress?>(null) }
     val contactPoints = remember { mutableMapOf<PointerId, Offset>() }
-    LaunchedEffect(monitorOpen, tabletOpen, paused, session.stage) { press = null }
+    LaunchedEffect(monitorOpen, tabletOpen, paused) { press = null }
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
     var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var workbench by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val assembly = session.assembly
-    val hasMachine = session.stage == OrderStage.Active
+    val hasMachine = session.chassis != null
     val selection = ComputerPart.entries.firstOrNull { it.name == selectedName }
     val currentDrag = draggedPart
-    val hoveredSlot = currentDrag?.let { placementSlot(it.item.type, assembly, viewport, it.position) }
+    val placementItem = session.inventory.firstOrNull { it.id == selectedItemId }
+    val placementSlots = placementItem?.let { item ->
+        item.type.compatibleSlots.filter { session.canInstall(item, it) }
+    }.orEmpty()
+    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, viewport, it.position) }
 
     fun selectPart(part: ComputerPart) {
         selectedItemId = null
@@ -298,7 +288,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     fun canHold(target: WorkbenchHold): Boolean {
-        if (paused || tabletOpen || monitorOpen || session.stage != OrderStage.Active) return false
+        if (paused || tabletOpen || monitorOpen) return false
         val screw = target.screw ?: return session.assembly.canRemove(target.part)
         return screwdriverSelected && session.assembly.screwAction(target.part, screw.index) == screw.action
     }
@@ -337,7 +327,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
 
     fun moveInventoryPart(item: InventoryItem, position: Offset) {
         val active = draggedPart
-        if (!hasMachine || tabletOpen || (active != null && active.item.id != item.id)) return
+        if (tabletOpen || paused || press != null || (active != null && active.item.id != item.id)) return
         if (active == null) selectItem(item)
         draggedPart = InventoryDrag(item, position)
     }
@@ -345,8 +335,9 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     fun finishInventoryDrag(item: InventoryItem, released: Boolean) {
         val active = draggedPart?.takeIf { it.item.id == item.id } ?: return
         draggedPart = null
-        if (!released || tabletOpen) return
-        val slot = placementSlot(item.type, session.assembly, viewport, active.position) ?: return
+        if (!released || tabletOpen || paused) return
+        val available = item.type.compatibleSlots.filter { session.canInstall(item, it) }
+        val slot = placementSlot(available, viewport, active.position) ?: return
         session = session.install(item.id, slot)
         selectedItemId = null
         selectedName = slot.name.takeIf { slot.screws.isNotEmpty() }
@@ -381,14 +372,13 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     ) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize()) {
-                if (artwork.ready) WorkbenchScene(artwork, assembly.takeIf { hasMachine }, selection,
-                    session.inventory.firstOrNull { it.id == selectedItemId }?.type,
+                if (artwork.ready) WorkbenchScene(artwork, assembly, session.chassis, selection, placementSlots,
                     screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
                     { session = session.applyPasteToMountedCpu() }, hoveredSlot, { viewport = it }, ::selectPart, ::beginHold, ::endHold, ::performHold,
                     Modifier.fillMaxSize())
 
             }
-            WorkshopControlRail("开机检测", if (hasMachine) ({ monitorOpen = true }) else null) {
+            WorkshopControlRail("开机检测", { monitorOpen = true }) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(ToolGap)) {
                     ToolSlot("螺丝刀", { tool = if (screwdriverSelected) null else BenchTool.Driver }, hasMachine, screwdriverSelected) {
@@ -414,6 +404,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                 drawPartPreview(
                     artwork,
                     currentDrag.item.type,
+                    currentDrag.item.part.product,
                     workbench?.takeIf { it.isAttached }?.windowToLocal(currentDrag.position) ?: return@Canvas,
                     Size(95.dp.toPx(), 76.dp.toPx()),
                 )
@@ -569,7 +560,7 @@ private fun InventorySlot(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PartThumbnail(artwork, item.type, Modifier.size(width = 44.dp, height = 22.dp))
+        PartThumbnail(artwork, item.type, item.part.product, Modifier.size(width = 44.dp, height = 28.dp))
         Spacer(Modifier.height(2.dp))
         GameText(item.label, fontSize = 12)
         if (item.part.hasPaste) GameText("已涂硅脂", fontSize = 11, color = Amber)

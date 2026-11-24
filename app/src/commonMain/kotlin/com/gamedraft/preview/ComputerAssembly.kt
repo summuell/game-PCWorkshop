@@ -5,6 +5,7 @@ internal data class MountingScrew(val x: Int, val y: Int, val radius: Int = 11)
 internal enum class ScrewAction { Loosen, Tighten }
 
 internal enum class ComputerPart(val label: String, val screws: List<MountingScrew> = emptyList()) {
+    Chassis("机箱"),
     Motherboard(
         "主板",
         listOf(MountingScrew(622, 387), MountingScrew(228, 710), MountingScrew(213, 940), MountingScrew(538, 942)),
@@ -49,7 +50,8 @@ internal enum class ComputerPart(val label: String, val screws: List<MountingScr
             MotherboardCable -> listOf(Motherboard, PowerSupply)
             GraphicsCable -> listOf(GraphicsCard, PowerSupply)
             DriveCable -> listOf(HardDrive, PowerSupply, Motherboard)
-            else -> emptyList()
+            Chassis -> emptyList()
+            else -> listOf(Chassis)
         }
 }
 
@@ -59,14 +61,14 @@ internal data class AssemblyBlocker(val part: ComputerPart, val removeFirst: Boo
 }
 
 internal data class ComputerAssembly(
-    val inventory: List<ComputerPart> = emptyList(),
+    val installed: Set<ComputerPart> = emptySet(),
     val loosenedScrews: Map<ComputerPart, Set<Int>> = emptyMap(),
 ) {
-    fun isInstalled(part: ComputerPart): Boolean = part !in inventory
+    fun isInstalled(part: ComputerPart): Boolean = part in installed
 
-    fun isVisible(part: ComputerPart): Boolean {
+    fun isVisible(part: ComputerPart, throughPanel: Boolean = false): Boolean {
         if (!isInstalled(part)) return false
-        if (isInstalled(ComputerPart.SidePanel)) return part == ComputerPart.SidePanel
+        if (!throughPanel && isInstalled(ComputerPart.SidePanel)) return part == ComputerPart.SidePanel
         return part != ComputerPart.Processor || !isInstalled(ComputerPart.Cooler)
     }
 
@@ -109,7 +111,7 @@ internal data class ComputerAssembly(
 
     fun remove(part: ComputerPart): ComputerAssembly {
         if (!canRemove(part)) return this
-        return copy(inventory = listOf(part) + inventory, loosenedScrews = loosenedScrews - part)
+        return copy(installed = installed - part, loosenedScrews = loosenedScrews - part)
     }
 
     fun canInstall(part: ComputerPart): Boolean = !isInstalled(part) && blockerFor(part) == null
@@ -118,25 +120,10 @@ internal data class ComputerAssembly(
         if (!canInstall(part)) return this
         val emptyHoles = part.screws.indices.toSet()
         val updatedScrews = if (emptyHoles.isEmpty()) loosenedScrews else loosenedScrews + (part to emptyHoles)
-        return copy(inventory = inventory - part, loosenedScrews = updatedScrews)
+        return copy(installed = installed + part, loosenedScrews = updatedScrews)
     }
 
-    fun save(): List<String> = inventory.map { it.name } + loosenedScrews.flatMap { (part, screws) ->
-        screws.map { "${part.name}:$it" }
-    }
-
-    companion object {
-        fun restore(entries: List<String>): ComputerAssembly {
-            // Old saves can still contain removed case fans and their screw positions.
-            val currentParts = entries.filter { entry ->
-                ComputerPart.entries.any { it.name == entry.substringBefore(':') }
-            }
-            val inventory = currentParts.filterNot { ':' in it }.map(ComputerPart::valueOf)
-            val screws = currentParts.filter { ':' in it }.groupBy(
-                keySelector = { ComputerPart.valueOf(it.substringBefore(':')) },
-                valueTransform = { it.substringAfter(':').toInt() },
-            )
-            return ComputerAssembly(inventory, screws.mapValues { it.value.toSet() })
-        }
+    fun saveScrews(): List<String> = loosenedScrews.flatMap { (part, screws) ->
+        screws.map { "Screw|${part.name}|$it" }
     }
 }

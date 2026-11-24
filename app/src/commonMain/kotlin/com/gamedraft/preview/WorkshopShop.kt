@@ -1,10 +1,11 @@
 package com.gamedraft.preview
 
 internal enum class ShopCategory(val label: String) {
-    Tools("工具"), Board("主板"), Cpu("CPU"), Ram("内存"), Graphics("显卡"), Power("电源"), Drives("硬盘"), Cables("线材")
+    Cases("机箱"), Board("主板"), Cpu("CPU"), Cooling("散热"), Ram("内存"), Graphics("显卡"), Power("电源"),
+    Drives("硬盘"), Cables("线材"), Tools("工具")
 }
 
-internal enum class DriveBrand { Seagate, Kingston }
+internal enum class CaseStyle { Mesh, Glass, Slats, Solid, Perforated }
 
 internal enum class Product(
     val category: ShopCategory,
@@ -13,10 +14,16 @@ internal enum class Product(
     val model: String,
     val detail: String,
     val spec: HardwareSpecification = HardwareSpecification(),
-    val driveBrand: DriveBrand? = null,
+    val caseStyle: CaseStyle? = null,
 ) {
+    Air903(ShopCategory.Cases, ComputerPart.Chassis, "君主-AIR 903 BASE-黑色", "AIR 903", "黑色 · 网孔前板", caseStyle = CaseStyle.Mesh),
+    H5Flow(ShopCategory.Cases, ComputerPart.Chassis, "恩杰-H5 Flow-白色", "H5 Flow", "白色 · 玻璃侧板", caseStyle = CaseStyle.Glass),
+    North(ShopCategory.Cases, ComputerPart.Chassis, "分形工艺-North-炭黑色", "North", "炭黑色 · 胡桃木格栅", caseStyle = CaseStyle.Slats),
+    PureBase500(ShopCategory.Cases, ComputerPart.Chassis, "德商必酷-Pure Base 500-深灰色", "Pure Base 500", "深灰色 · 封闭式面板", caseStyle = CaseStyle.Solid),
+    Frame4000D(ShopCategory.Cases, ComputerPart.Chassis, "海盗船-FRAME 4000D-白色", "FRAME 4000D", "白色 · 三角孔前板", caseStyle = CaseStyle.Perforated),
     B560(ShopCategory.Board, ComputerPart.Motherboard, "华硕-B560M-K", "ASUS PRIME B560M-K", "LGA1200 · 2 个 DDR4 插槽"),
     I5(ShopCategory.Cpu, ComputerPart.Processor, "英特尔-酷睿-i5-11400F", "Intel Core i5-11400F", "6 核 12 线程 · LGA1200"),
+    CpuCooler(ShopCategory.Cooling, ComputerPart.Cooler, "英特尔-LGA1200-原装散热器", "Intel LGA1200", "下压式风冷 · LGA1200"),
     Dimm8(ShopCategory.Ram, ComputerPart.MemoryLeft, "金士顿-DDR4-3200-8GB", "DDR4-3200 8 GB", "台式机 DIMM · 单条",
         HardwareSpecification(capacityGb = 8, memoryRateMt = 3200)),
     Dimm16(ShopCategory.Ram, ComputerPart.MemoryLeft, "金士顿-DDR4-3200-16GB", "DDR4-3200 16 GB", "台式机 DIMM · 单条",
@@ -25,26 +32,28 @@ internal enum class Product(
         HardwareSpecification(performanceTier = 2)),
     Psu550(ShopCategory.Power, ComputerPart.PowerSupply, "航嘉-ATX-550W", "ATX 550 W", "额定功率 550 W", HardwareSpecification(powerWatts = 550)),
     Nvme512(ShopCategory.Drives, ComputerPart.SolidStateDrive, "金士顿-SSD-512GB-KC3000", "Kingston KC3000", "512 GB · NVMe SSD",
-        HardwareSpecification(performanceTier = 2, capacityGb = 512), DriveBrand.Kingston),
+        HardwareSpecification(performanceTier = 2, capacityGb = 512)),
     Hdd1T(ShopCategory.Drives, ComputerPart.HardDrive, "希捷-HDD-1TB-酷鱼", "Seagate BarraCuda", "1000 GB · SATA HDD",
-        HardwareSpecification(capacityGb = 1000), DriveBrand.Seagate),
+        HardwareSpecification(capacityGb = 1000)),
     IronWolf2T(ShopCategory.Drives, ComputerPart.HardDrive, "希捷-HDD-2TB-酷狼", "Seagate IronWolf", "2000 GB · SATA HDD",
-        HardwareSpecification(capacityGb = 2000), DriveBrand.Seagate),
+        HardwareSpecification(capacityGb = 2000)),
     VideoLead(ShopCategory.Cables, ComputerPart.GraphicsCable, "通用-显卡供电线-PCIe", "显卡供电线", "PCIe · 6+2 针"),
     DriveLead(ShopCategory.Cables, ComputerPart.DriveCable, "通用-硬盘连接线-SATA", "硬盘连接线", "SATA 硬盘线组"),
     BoardLead(ShopCategory.Cables, ComputerPart.MotherboardCable, "通用-主板供电线-ATX", "主板供电线", "ATX · 24 针");
 
     val shopName: String get() = "${category.label}-$shopDescription"
 
-    fun newPart() = CustomerPart(spec, product = this)
+    fun newPart() = HardwarePart(spec, product = this)
 }
 
 internal data class Purchase(val number: Int, val product: Product, val received: Boolean = false)
 
-internal data class InventoryItem(val id: Int, val type: ComputerPart, val part: CustomerPart) {
+internal data class InventoryItem(val id: Int, val type: ComputerPart, val part: HardwarePart) {
     val label: String get() = when (type) {
         ComputerPart.MemoryLeft, ComputerPart.MemoryRight -> "内存 ${part.specification.capacityGb}G"
         ComputerPart.HardDrive -> "硬盘 ${part.specification.capacityGb / 1000}TB"
+        ComputerPart.Chassis -> part.product?.model ?: type.label
+        ComputerPart.SidePanel -> part.product?.model?.let { "$it 侧板" } ?: type.label
         else -> type.label
     }
 }

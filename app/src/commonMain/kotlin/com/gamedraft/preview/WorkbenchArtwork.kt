@@ -49,7 +49,6 @@ import com.gamedraft.preview.resources.workbench_assembled
 import com.gamedraft.preview.resources.workbench_board
 import com.gamedraft.preview.resources.workbench_clean
 import com.gamedraft.preview.resources.workbench_empty
-import com.gamedraft.preview.resources.workbench_lid
 import org.jetbrains.compose.resources.imageResource
 
 private const val ArtworkWidth = 1024
@@ -78,10 +77,9 @@ internal data class WorkbenchArtwork(
     val emptyCase: ImageBitmap,
     val assembled: ImageBitmap,
     val board: ImageBitmap,
-    val lid: ImageBitmap,
 ) {
     val ready: Boolean
-        get() = listOf(table, emptyCase, assembled, board, lid).all { it.width > 1 && it.height > 1 }
+        get() = listOf(table, emptyCase, assembled, board).all { it.width > 1 && it.height > 1 }
 }
 
 @Composable
@@ -90,7 +88,6 @@ internal fun loadWorkbenchArtwork() = WorkbenchArtwork(
     emptyCase = imageResource(Res.drawable.workbench_empty),
     assembled = imageResource(Res.drawable.workbench_assembled),
     board = imageResource(Res.drawable.workbench_board),
-    lid = imageResource(Res.drawable.workbench_lid),
 )
 
 private data class PartArtwork(
@@ -108,14 +105,9 @@ private fun outline(first: Pair<Int, Int>, vararg remaining: Pair<Int, Int>) = P
     close()
 }
 
-private val ComputerCaseOutline = outline(
-    105 to 233, 882 to 233, 911 to 280, 911 to 1233, 890 to 1273, 861 to 1293,
-    811 to 1293, 794 to 1305, 714 to 1305, 704 to 1293, 238 to 1293, 225 to 1305,
-    151 to 1305, 144 to 1293, 105 to 1293,
-)
-
 // Coordinates are measured in the same 1024 by 1536 view for every artwork layer.
 private val partArtwork = mapOf(
+    ComputerPart.Chassis to PartArtwork(ChassisBounds),
     ComputerPart.Motherboard to PartArtwork(
         bounds(155, 367, 652, 960),
         outline(170 to 367, 631 to 367, 649 to 378, 649 to 945, 637 to 959, 177 to 959, 164 to 946,
@@ -184,9 +176,10 @@ private val partArtwork = mapOf(
 @Composable
 internal fun WorkbenchScene(
     artwork: WorkbenchArtwork,
-    assembly: ComputerAssembly?,
+    assembly: ComputerAssembly,
+    chassis: Product?,
     selectedPart: ComputerPart?,
-    placementPart: ComputerPart?,
+    placementSlots: List<ComputerPart>,
     screwdriverSelected: Boolean,
     pasteSelected: Boolean,
     cpuHasPaste: Boolean,
@@ -199,7 +192,10 @@ internal fun WorkbenchScene(
     onAccessibleHold: (WorkbenchHold) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val visibleParts = assembly?.let { machine -> ComputerPart.entries.filter(machine::isVisible) }.orEmpty()
+    val visibleParts = ComputerPart.entries.filter { assembly.isVisible(it) }
+    val renderParts = if (chassis?.caseStyle == CaseStyle.Glass && assembly.isInstalled(ComputerPart.SidePanel)) {
+        ComputerPart.entries.filter { assembly.isVisible(it, throughPanel = true) }
+    } else visibleParts
 
     BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.Center) {
         val aspectRatio = WorkbenchHeight.toFloat() / ArtworkWidth
@@ -236,34 +232,28 @@ internal fun WorkbenchScene(
                     rotate(90f, pivot = Offset.Zero)
                     scale(scale, scale, pivot = Offset.Zero)
                 }) {
-                    if (assembly != null) {
-                        clipPath(ComputerCaseOutline) { drawSheet(artwork.emptyCase) }
-                        for (part in visibleParts) {
-                            drawPart(artwork, part)
-                            if (part == ComputerPart.Processor && cpuHasPaste) {
-                                val area = partArtwork.getValue(part).bounds
-                                val delta = Offset(area.width * .16f, area.height * .16f)
-                                val color = Color(0xFFECEBE1)
-                                drawLine(color, area.center - delta, area.center + delta, 7f)
-                                val cross = Offset(-delta.x, delta.y)
-                                drawLine(color, area.center - cross, area.center + cross, 7f)
-                            }
-                            part.screws.forEachIndexed { index, screw ->
-                                if (!assembly.hasScrew(part, index)) {
-                                    drawScrewHole(screw)
-                                }
-                                if (screwdriverSelected) {
-                                    assembly.screwAction(part, index)?.let { drawScrewHighlight(screw, it) }
-                                }
-                            }
+                    chassis?.caseStyle?.let { drawChassis(it) }
+                    for (part in renderParts) {
+                        if (part == ComputerPart.Chassis) continue
+                        drawPart(artwork, part, chassis)
+                        if (part == ComputerPart.Processor && cpuHasPaste) {
+                            val area = partArtwork.getValue(part).bounds
+                            val delta = Offset(area.width * .16f, area.height * .16f)
+                            val color = Color(0xFFECEBE1)
+                            drawLine(color, area.center - delta, area.center + delta, 7f)
+                            val cross = Offset(-delta.x, delta.y)
+                            drawLine(color, area.center - cross, area.center + cross, 7f)
                         }
-                        if (selectedPart != null && assembly.isVisible(selectedPart)) drawPartHighlight(selectedPart)
-                        if (placementPart != null) {
-                            for (slot in placementPart.compatibleSlots.filter(assembly::canInstall)) {
-                                drawPlacementGuide(slot, slot == hoveredSlot)
+                        part.screws.forEachIndexed { index, screw ->
+                            if (assembly.hasScrew(part, index)) drawScrewHead(screw)
+                            else drawScrewHole(screw)
+                            if (screwdriverSelected) {
+                                assembly.screwAction(part, index)?.let { drawScrewHighlight(screw, it) }
                             }
                         }
                     }
+                    if (selectedPart != null && assembly.isVisible(selectedPart)) drawPartHighlight(selectedPart)
+                    for (slot in placementSlots) drawPlacementGuide(slot, slot == hoveredSlot)
                 }
             }
             // Parts use the same stacking order for drawing and hit testing.
@@ -283,7 +273,7 @@ internal fun WorkbenchScene(
                     )
                 }
             }
-            if (assembly != null && screwdriverSelected) {
+            if (screwdriverSelected) {
                 for (part in visibleParts) {
                     part.screws.forEachIndexed { index, screw ->
                         val action = assembly.screwAction(part, index)
@@ -344,26 +334,26 @@ private fun HoldZone(
     )
 }
 
-internal fun placementSlot(part: ComputerPart, assembly: ComputerAssembly, viewport: LayoutCoordinates?, position: Offset): ComputerPart? {
+internal fun placementSlot(slots: List<ComputerPart>, viewport: LayoutCoordinates?, position: Offset): ComputerPart? {
     if (viewport == null || !viewport.isAttached) return null
     val local = viewport.windowToLocal(position)
     val width = viewport.size.width.toFloat()
     val height = viewport.size.height.toFloat()
     if (width <= 0 || height <= 0 || local.x !in 0f..width || local.y !in 0f..height) return null
     val point = Offset(local.y * ArtworkWidth / height, WorkbenchTop + WorkbenchHeight * (1f - local.x / width))
-    return part.compatibleSlots.firstOrNull { assembly.canInstall(it) && placementArea(it).contains(point) }
+    return slots.firstOrNull { placementArea(it).contains(point) }
 }
 
 @Composable
-internal fun PartThumbnail(artwork: WorkbenchArtwork, part: ComputerPart, modifier: Modifier) {
+internal fun PartThumbnail(artwork: WorkbenchArtwork, part: ComputerPart, product: Product?, modifier: Modifier) {
     Canvas(modifier) {
-        drawPartPreview(artwork, part, center, size)
+        drawPartPreview(artwork, part, product, center, size)
     }
 }
 
-internal fun DrawScope.drawPartPreview(artwork: WorkbenchArtwork, part: ComputerPart, position: Offset, available: Size) {
+internal fun DrawScope.drawPartPreview(artwork: WorkbenchArtwork, part: ComputerPart, product: Product?, position: Offset, available: Size) {
     fitArtwork(partArtwork.getValue(part).bounds, position, available) {
-        drawPart(artwork, part)
+        drawPart(artwork, part, product)
     }
 }
 
@@ -436,7 +426,12 @@ private fun DrawScope.drawSheet(image: ImageBitmap) {
     drawImage(image = image, dstSize = IntSize(ArtworkWidth, ArtworkHeight), filterQuality = FilterQuality.None)
 }
 
-private fun DrawScope.drawPart(artwork: WorkbenchArtwork, part: ComputerPart) {
+private fun DrawScope.drawPart(artwork: WorkbenchArtwork, part: ComputerPart, product: Product? = null) {
+    if (part == ComputerPart.Chassis || part == ComputerPart.SidePanel) {
+        val style = product?.caseStyle ?: return
+        if (part == ComputerPart.Chassis) drawChassis(style) else drawCasePanel(style)
+        return
+    }
     val art = partArtwork.getValue(part)
     if (part == ComputerPart.MemoryRight) {
         val source = partArtwork.getValue(ComputerPart.MemoryLeft).bounds
@@ -451,7 +446,6 @@ private fun DrawScope.drawPart(artwork: WorkbenchArtwork, part: ComputerPart) {
     }
     val image = when (part) {
         ComputerPart.Motherboard -> artwork.board
-        ComputerPart.SidePanel -> artwork.lid
         else -> artwork.assembled
     }
     clipRect(art.bounds.left, art.bounds.top, art.bounds.right, art.bounds.bottom) {
@@ -509,6 +503,16 @@ private fun DrawScope.drawPlacementGuide(part: ComputerPart, overGuide: Boolean)
 
 private fun screwArea(screw: MountingScrew, radius: Int) =
     bounds(screw.x - radius, screw.y - radius, screw.x + radius, screw.y + radius)
+
+private fun DrawScope.drawScrewHead(screw: MountingScrew) {
+    val rim = screwArea(screw, screw.radius)
+    val head = screwArea(screw, screw.radius - 3)
+    val center = head.center
+    drawRect(Color(0xFF20232A), rim.topLeft, rim.size)
+    drawRect(Color(0xFF90959B), head.topLeft, head.size)
+    drawLine(Color(0xFF42474F), Offset(head.left + 2, center.y), Offset(head.right - 2, center.y), 3f)
+    drawLine(Color(0xFF42474F), Offset(center.x, head.top + 2), Offset(center.x, head.bottom - 2), 3f)
+}
 
 private fun DrawScope.drawScrewHole(screw: MountingScrew) {
     val rim = screwArea(screw, screw.radius)

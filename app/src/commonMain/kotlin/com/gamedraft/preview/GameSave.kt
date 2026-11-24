@@ -12,9 +12,10 @@ internal data class GameSave(val savedAt: String, val session: RepairSession) {
     companion object {
         fun decode(value: String): GameSave {
             val lines = value.lines()
-            require(lines.size >= 6 && lines[0] == "PCWorkshop/1" && lines[1].isNotBlank())
+            require(lines.size >= 4 && lines[0] == "PCWorkshop/1" && lines[1].isNotBlank())
             val data = lines.drop(2)
-            require(OrderStage.entries.any { it.name == data.first() } && "ShopInventory" in data)
+            val legacy = data.first() in setOf("Available", "Active", "Delivered") && "ShopInventory" in data
+            require(data.first() == "FreeBuild" || legacy)
             return GameSave(lines[1], RepairSession.restore(data))
         }
     }

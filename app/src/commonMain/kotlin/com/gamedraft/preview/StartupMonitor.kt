@@ -121,10 +121,9 @@ private suspend fun gameDelay(milliseconds: Long, paused: androidx.compose.runti
 }
 
 @Composable
-internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: Boolean, onPassed: () -> Unit,
+internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: Boolean,
     onInstall: (ComputerPart) -> Unit) {
     val menuPaused = rememberUpdatedState(paused)
-    val finishStartup by rememberUpdatedState(onPassed)
     val finishInstallation by rememberUpdatedState(onInstall)
     val cycle = power.cycle
     LaunchedEffect(power, cycle) {
@@ -157,7 +156,6 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: B
                 return@LaunchedEffect
             }
         }
-        if (power.cycle == cycle && session.coolingAvailable) finishStartup()
     }
     LaunchedEffect(power, cycle, power.destination) {
         val disk = power.destination ?: return@LaunchedEffect
@@ -173,6 +171,7 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: B
 
 @Composable
 internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClose: () -> Unit) {
+    val hasChassis = session.chassis != null
     Row(Modifier.fillMaxSize().background(Background)) {
         Monitor(power, session, Modifier.weight(1f).fillMaxHeight().padding(8.dp))
         WorkshopControlRail("工作台", onClose) {
@@ -182,7 +181,7 @@ internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClos
                     .background(if (power.powered) Color(0xFF193D38) else Panel)
                     .border(2.dp, if (power.powered) StartupGreen else Border)
                     .semantics { stateDescription = if (power.powered) "已开机" else "已关机" }
-                    .clickable(role = Role.Button) { if (power.requested) power.stop() else power.start() }
+                    .clickable(enabled = hasChassis, role = Role.Button) { if (power.requested) power.stop() else power.start() }
                     .padding(horizontal=8.dp), contentAlignment=Alignment.Center) {
                     Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                         Canvas(Modifier.size(14.dp)) {
@@ -195,7 +194,7 @@ internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClos
                     }
                 }
                 GameButton("重启", { power.start(null) }, enabled = power.powered)
-                GameButton(if (power.usb) "拔出 U 盘" else "插入 U 盘", power::toggleUsb)
+                GameButton(if (power.usb) "拔出 U 盘" else "插入 U 盘", power::toggleUsb, enabled = hasChassis)
             }
         }
     }
