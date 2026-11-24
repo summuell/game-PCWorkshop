@@ -69,7 +69,23 @@ internal data class HardwareConfiguration(
 private const val StartupVerifiedMarker = "StartupVerified"
 private const val DurabilityPrefix = "Durability:"
 
-internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNormally: Boolean, val reinstalled: Boolean) {
+internal data class DriveRequirement(val brand: DriveBrand, val capacityGb: Int, val durability: Int) {
+    fun accepts(drive: CustomerPart): Boolean =
+        drive.working && drive.product?.driveBrand == brand &&
+            drive.specification.capacityGb >= capacityGb && drive.durability >= durability
+
+    companion object {
+        fun from(drive: CustomerPart) = DriveRequirement(
+            requireNotNull(drive.product?.driveBrand), drive.specification.capacityGb, drive.durability,
+        )
+    }
+}
+
+internal data class DeliveryRequirements(
+    val partsIntact: Boolean,
+    val startsNormally: Boolean,
+    val reinstalled: Boolean,
+) {
     val ready: Boolean
         get() = partsIntact && startsNormally && reinstalled
 }
@@ -81,6 +97,7 @@ internal data class RepairSession(
     val parts: Map<ComputerPart, CustomerPart> = StarterOrder.originalParts,
     val purchases: List<Purchase> = emptyList(),
     val inventory: List<InventoryItem> = emptyList(),
+    val driveRequirement: DriveRequirement = DriveRequirement.from(StarterOrder.originalParts.getValue(ComputerPart.HardDrive)),
     private val startupVerifiedFor: HardwareConfiguration? = null,
 ) {
     private val hardware: HardwareConfiguration
@@ -91,8 +108,10 @@ internal data class RepairSession(
 
     fun accept(): RepairSession =
         if (stage == OrderStage.Available) {
+            val received = StarterOrder.createParts()
             copy(stage = OrderStage.Active, assembly = ComputerAssembly(inventory = listOf(ComputerPart.SolidStateDrive)),
-                preferredDisk = ComputerPart.HardDrive, parts = StarterOrder.createParts())
+                preferredDisk = ComputerPart.HardDrive, parts = received,
+                driveRequirement = DriveRequirement.from(received.getValue(ComputerPart.HardDrive)))
         } else {
             this
         }
@@ -176,16 +195,21 @@ internal data class RepairSession(
         }
 
     fun deliveryRequirements(): DeliveryRequirements {
-        val partsIntact = StarterOrder.originalParts.all { (part, original) ->
-            val current = parts[part] ?: return@all false
-            assembly.isInstalled(part) && current.working &&
-                current.specification.meets(original.specification) &&
-                assembly.screwsRemaining(part) == part.screws.size
+        val requiredPartsIntact = StarterOrder.originalParts.all { (slot, original) ->
+            val installed = parts[slot] ?: return@all false
+            assembly.isInstalled(slot) && when (slot) {
+                ComputerPart.HardDrive -> driveRequirement.accepts(installed)
+                else -> installed.specification.meets(original.specification)
+            }
         }
-        val optionalPartsIntact = parts.all { (slot, part) ->
+        val assemblyIntact = parts.all { (slot, part) ->
             part.working && assembly.screwsRemaining(slot) == slot.screws.size
         }
-        return DeliveryRequirements(partsIntact && optionalPartsIntact, startupVerified, bootDisk?.let { parts[it]?.system } == DiskSystem.Reinstalled)
+        return DeliveryRequirements(
+            partsIntact = requiredPartsIntact && assemblyIntact,
+            startsNormally = startupVerified,
+            reinstalled = bootDisk?.let { parts[it]?.system } == DiskSystem.Reinstalled,
+        )
     }
 
     private fun hasWorkingPart(part: ComputerPart): Boolean =
@@ -203,6 +227,7 @@ internal data class RepairSession(
         add("SystemOrder")
         add("Preferred="+preferredDisk.name)
         add("ShopInventory")
+        add("OriginalDrive|${driveRequirement.brand.name}|${driveRequirement.capacityGb}|${driveRequirement.durability}")
         if (startupVerified) add(StartupVerifiedMarker)
         for ((slot, part) in parts) add("Mounted|${slot.name}|${part.encode()}")
         for (item in inventory) add("Item|${item.id}|${item.type.name}|${item.part.encode()}")
@@ -217,15 +242,20 @@ internal data class RepairSession(
                 val purchases = mutableListOf<Purchase>()
                 val inventory = mutableListOf<InventoryItem>()
                 val parts = mutableMapOf<ComputerPart, CustomerPart>()
+                var originalDrive: DriveRequirement? = null
                 for (entry in entries) {
                     val fields = entry.split('|')
                     when (fields.first()) {
+                        "OriginalDrive" -> originalDrive = DriveRequirement(
+                            DriveBrand.valueOf(fields[1]), fields[2].toInt(), fields[3].toInt(),
+                        )
                         "Purchase" -> purchases += Purchase(fields[1].toInt(), Product.valueOf(fields[2]), fields[3].toBoolean())
                         "Item" -> inventory += InventoryItem(fields[1].toInt(), ComputerPart.valueOf(fields[2]), decodePart(fields, 3))
                         "Mounted" -> parts[ComputerPart.valueOf(fields[1])] = decodePart(fields, 2)
                     }
                 }
                 val session = RepairSession(stage = stage, parts = parts, purchases = purchases, inventory = inventory,
+                    driveRequirement = originalDrive ?: legacyDriveRequirement(parts, inventory),
                     assembly = ComputerAssembly.restore(entries),
                     preferredDisk = ComputerPart.entries.firstOrNull { "Preferred="+it.name in entries } ?: ComputerPart.SolidStateDrive)
                 return if (StartupVerifiedMarker in entries) session.recordSuccessfulStartup() else session
@@ -252,10 +282,23 @@ internal data class RepairSession(
             val loose = session.assembly.inventory.mapIndexed { index, type ->
                 InventoryItem(index + 1, type, session.parts.getValue(type))
             }
-            val migrated = session.copy(parts = session.parts.filterKeys(session.assembly::isInstalled), inventory = loose)
+            val mounted = session.parts.filterKeys(session.assembly::isInstalled)
+            val migrated = session.copy(parts = mounted, inventory = loose,
+                driveRequirement = legacyDriveRequirement(mounted, loose))
             return if (startupVerified) migrated.recordSuccessfulStartup() else migrated
         }
     }
+}
+
+// Older saves tracked individual parts but did not identify the intake disk after a swap.
+// New stock had 100 durability. Use the lowest plausible original when several disks match.
+private fun legacyDriveRequirement(parts: Map<ComputerPart, CustomerPart>, inventory: List<InventoryItem>): DriveRequirement {
+    val original = StarterOrder.originalParts.getValue(ComputerPart.HardDrive)
+    val candidates = inventory.filter { it.type == ComputerPart.HardDrive }.map { it.part } +
+        listOfNotNull(parts[ComputerPart.HardDrive])
+    val minimum = candidates.filter { it.product == original.product && it.specification.capacityGb == original.specification.capacityGb }
+        .minOfOrNull { it.durability } ?: MinimumWorkingDurability
+    return DriveRequirement.from(original).copy(durability = minimum)
 }
 
 private fun CustomerPart.encode(): String = with(specification) {

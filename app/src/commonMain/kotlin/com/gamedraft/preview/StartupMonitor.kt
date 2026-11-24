@@ -173,37 +173,31 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: B
 
 @Composable
 internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClose: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Background).padding(8.dp)) {
-        val controls: @Composable () -> Unit = {
-            GameButton("工作台", onClose)
-            Box(Modifier.height(42.dp).widthIn(min=74.dp)
-                .background(if (power.powered) Color(0xFF193D38) else Panel)
-                .border(2.dp, if (power.powered) StartupGreen else Border)
-                .semantics { stateDescription = if (power.powered) "已开机" else "已关机" }
-                .clickable(role = Role.Button) { if (power.requested) power.stop() else power.start() }
-                .padding(horizontal=8.dp), contentAlignment=Alignment.Center) {
-                Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                    Canvas(Modifier.size(14.dp)) {
-                        val color = if (power.powered) StartupGreen else MutedText
-                        drawArc(color,-55f,290f,false,Offset(1f,size.height*.15f),Size(size.width-2f,size.height*.82f),
-                            style=androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-                        drawLine(color,Offset(center.x,0f),center,2.dp.toPx())
+    Row(Modifier.fillMaxSize().background(Background)) {
+        Monitor(power, session, Modifier.weight(1f).fillMaxHeight().padding(8.dp))
+        WorkshopControlRail("工作台", onClose) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.height(42.dp).widthIn(min=74.dp)
+                    .background(if (power.powered) Color(0xFF193D38) else Panel)
+                    .border(2.dp, if (power.powered) StartupGreen else Border)
+                    .semantics { stateDescription = if (power.powered) "已开机" else "已关机" }
+                    .clickable(role = Role.Button) { if (power.requested) power.stop() else power.start() }
+                    .padding(horizontal=8.dp), contentAlignment=Alignment.Center) {
+                    Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        Canvas(Modifier.size(14.dp)) {
+                            val color = if (power.powered) StartupGreen else MutedText
+                            drawArc(color,-55f,290f,false,Offset(1f,size.height*.15f),Size(size.width-2f,size.height*.82f),
+                                style=androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                            drawLine(color,Offset(center.x,0f),center,2.dp.toPx())
+                        }
+                        GameText("电源", fontSize=14, color=if(power.powered) StartupGreen else MutedText)
                     }
-                    GameText("电源", fontSize=14, color=if(power.powered) StartupGreen else MutedText)
                 }
+                GameButton("重启", { power.start(null) }, enabled = power.powered)
+                GameButton(if (power.usb) "拔出 U 盘" else "插入 U 盘", power::toggleUsb)
             }
-            GameButton("重启", { power.start(null) }, enabled = power.powered)
-            GameButton(if (power.usb) "拔出 U 盘" else "插入 U 盘", power::toggleUsb)
         }
-        Row(Modifier.fillMaxSize(), horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                Monitor(power,session,Modifier.weight(1f).fillMaxHeight())
-                Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End)).width(118.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(8.dp),
-                    verticalArrangement=Arrangement.spacedBy(8.dp), horizontalAlignment=Alignment.CenterHorizontally) {
-                    GameText("开机检测",fontSize=16)
-                    controls()
-                }
-            }
-
     }
 }
 

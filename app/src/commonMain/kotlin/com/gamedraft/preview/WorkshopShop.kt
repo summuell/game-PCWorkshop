@@ -4,12 +4,15 @@ internal enum class ShopCategory(val label: String) {
     Tools("工具"), Board("主板"), Cpu("CPU"), Ram("内存"), Graphics("显卡"), Power("电源"), Drives("硬盘")
 }
 
+internal enum class DriveBrand { Seagate, Kingston }
+
 internal enum class Product(
     val category: ShopCategory,
     val slot: ComputerPart,
     val model: String,
     val detail: String,
     val spec: HardwareSpecification = HardwareSpecification(),
+    val driveBrand: DriveBrand? = null,
 ) {
     B560(ShopCategory.Board, ComputerPart.Motherboard, "ASUS PRIME B560M-K", "LGA1200 · 2 个 DDR4 插槽"),
     I5(ShopCategory.Cpu, ComputerPart.Processor, "Intel Core i5-11400F", "6 核 12 线程 · LGA1200"),
@@ -21,9 +24,11 @@ internal enum class Product(
         HardwareSpecification(performanceTier = 2)),
     Psu550(ShopCategory.Power, ComputerPart.PowerSupply, "ATX 550 W", "额定功率 550 W", HardwareSpecification(powerWatts = 550)),
     Nvme512(ShopCategory.Drives, ComputerPart.SolidStateDrive, "Kingston KC3000", "512 GB · NVMe SSD",
-        HardwareSpecification(performanceTier = 2, capacityGb = 512)),
+        HardwareSpecification(performanceTier = 2, capacityGb = 512), DriveBrand.Kingston),
     Hdd1T(ShopCategory.Drives, ComputerPart.HardDrive, "Seagate BarraCuda", "1000 GB · SATA HDD",
-        HardwareSpecification(capacityGb = 1000));
+        HardwareSpecification(capacityGb = 1000), DriveBrand.Seagate),
+    IronWolf2T(ShopCategory.Drives, ComputerPart.HardDrive, "Seagate IronWolf", "2000 GB · SATA HDD",
+        HardwareSpecification(capacityGb = 2000), DriveBrand.Seagate);
 
     fun newPart() = CustomerPart(spec, product = this)
 }
@@ -33,6 +38,7 @@ internal data class Purchase(val number: Int, val product: Product, val received
 internal data class InventoryItem(val id: Int, val type: ComputerPart, val part: CustomerPart) {
     val label: String get() = when (type) {
         ComputerPart.MemoryLeft, ComputerPart.MemoryRight -> "内存 ${part.specification.capacityGb}G"
+        ComputerPart.HardDrive -> "硬盘 ${part.specification.capacityGb / 1000}TB"
         else -> type.label
     }
 }

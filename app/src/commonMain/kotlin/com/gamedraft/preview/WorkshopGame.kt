@@ -23,6 +23,8 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -342,10 +344,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     Modifier.fillMaxSize())
 
             }
-            val railWidth = ToolSlotSize * 2 + ToolGap + RailPadding * 2
-            Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End)).width(railWidth).fillMaxSize().border(1.dp, Border).padding(RailPadding),
-                verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (hasMachine) GameButton("开机检测", { monitorOpen = true }, Modifier.fillMaxWidth())
+            WorkshopControlRail("开机检测", if (hasMachine) ({ monitorOpen = true }) else null) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(ToolGap)) {
                     ToolSlot("螺丝刀", { screwdriverSelected = !screwdriverSelected }, hasMachine, screwdriverSelected) {
@@ -387,6 +386,21 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                 )
             }
         }
+    }
+}
+
+@Composable
+internal fun WorkshopControlRail(
+    switchLabel: String,
+    onSwitch: (() -> Unit)?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val width = ToolSlotSize * 2 + ToolGap + RailPadding * 2
+    Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End))
+        .width(width).fillMaxHeight().border(1.dp, Border).padding(RailPadding),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (onSwitch != null) GameButton(switchLabel, onSwitch, Modifier.fillMaxWidth())
+        content()
     }
 }
 
