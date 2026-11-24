@@ -9,13 +9,13 @@ internal enum class OrderStage { Available, Active, Delivered }
 internal data class HardwareSpecification(
     val performanceTier: Int = 1,
     val capacityGb: Int = 0,
-    val frequencyMhz: Int = 0,
+    val memoryRateMt: Int = 0,
     val powerWatts: Int = 0,
 ) {
     fun meets(minimum: HardwareSpecification): Boolean =
         performanceTier >= minimum.performanceTier &&
             capacityGb >= minimum.capacityGb &&
-            frequencyMhz >= minimum.frequencyMhz &&
+            memoryRateMt >= minimum.memoryRateMt &&
             powerWatts >= minimum.powerWatts
 }
 
@@ -25,6 +25,7 @@ internal data class CustomerPart(
     val specification: HardwareSpecification,
     val durability: Int = 100,
     val system: DiskSystem = DiskSystem.Blank,
+    val product: Product? = null,
 ) {
     val working: Boolean
         get() = durability >= MinimumWorkingDurability
@@ -35,15 +36,9 @@ internal object StarterOrder {
     const val request = "这台电脑用了好几年，想请你帮我重新装一套干净的系统。"
 
     val originalParts = ComputerPart.entries.associateWith { part ->
-        val specification = when (part) {
-            ComputerPart.GraphicsCard -> HardwareSpecification(performanceTier = 2)
-            ComputerPart.MemoryLeft, ComputerPart.MemoryRight -> HardwareSpecification(capacityGb = 8, frequencyMhz = 3200)
-            ComputerPart.SolidStateDrive -> HardwareSpecification(performanceTier = 2, capacityGb = 512)
-            ComputerPart.HardDrive -> HardwareSpecification(capacityGb = 1000)
-            ComputerPart.PowerSupply -> HardwareSpecification(powerWatts = 550)
-            else -> HardwareSpecification()
-        }
-        CustomerPart(specification, system = if (part == ComputerPart.SolidStateDrive) DiskSystem.Original else DiskSystem.Blank)
+        val type = if (part == ComputerPart.MemoryRight) ComputerPart.MemoryLeft else part
+        val original = Product.entries.firstOrNull { it.slot == type }?.newPart() ?: CustomerPart(HardwareSpecification())
+        if (part == ComputerPart.SolidStateDrive) original.copy(system = DiskSystem.Original) else original
     }
 
     fun createParts(savedDurability: Map<String, Int> = emptyMap()): Map<ComputerPart, CustomerPart> =
@@ -81,6 +76,8 @@ internal data class RepairSession(
     val assembly: ComputerAssembly = ComputerAssembly(),
     val preferredDisk: ComputerPart = ComputerPart.SolidStateDrive,
     val parts: Map<ComputerPart, CustomerPart> = StarterOrder.originalParts,
+    val purchases: List<Purchase> = emptyList(),
+    val inventory: List<InventoryItem> = emptyList(),
     private val startupVerifiedFor: HardwareConfiguration? = null,
 ) {
     private val hardware: HardwareConfiguration
@@ -91,27 +88,41 @@ internal data class RepairSession(
 
     fun accept(): RepairSession =
         if (stage == OrderStage.Available) {
-            RepairSession(stage = OrderStage.Active, parts = StarterOrder.createParts())
+            copy(stage = OrderStage.Active, parts = StarterOrder.createParts())
         } else {
             this
         }
 
-    fun remove(part: ComputerPart): RepairSession =
-        if (stage == OrderStage.Active) withAssembly(assembly.remove(part)) else this
+    fun buy(product: Product): RepairSession {
+        val number = (purchases.lastOrNull()?.number ?: 0) + 1
+        return copy(purchases = purchases + Purchase(number, product))
+    }
 
-    fun install(part: ComputerPart, slot: ComputerPart = part): RepairSession {
-        if (stage != OrderStage.Active || part !in assembly.inventory || part !in parts ||
-            slot !in part.compatibleSlots || !assembly.canInstall(slot)) return this
-        // Slots also identify inventory entries. Move the other loose stick to the vacated key.
-        val installedParts = if (part == slot) parts else {
-            (parts - part - slot).toMutableMap().apply {
-                put(slot, parts.getValue(part))
-                parts[slot]?.let { put(part, it) }
-            }
-        }
+    private fun newItem(type: ComputerPart, part: CustomerPart) =
+        InventoryItem((inventory.maxOfOrNull { it.id } ?: 0) + 1, type, part)
+
+    fun receive(number: Int): RepairSession {
+        val order = purchases.firstOrNull { it.number == number && !it.received } ?: return this
+        return copy(
+            purchases = purchases.map { if (it.number == number) it.copy(received = true) else it },
+            inventory = listOf(newItem(order.product.slot, order.product.newPart())) + inventory,
+        )
+    }
+
+    fun remove(part: ComputerPart): RepairSession {
+        if (stage != OrderStage.Active || !assembly.canRemove(part)) return this
+        val instance = parts[part] ?: return this
+        return copy(assembly = assembly.remove(part), parts = parts - part,
+            inventory = listOf(newItem(part, instance)) + inventory, startupVerifiedFor = null)
+    }
+
+    fun install(itemId: Int, slot: ComputerPart): RepairSession {
+        val item = inventory.firstOrNull { it.id == itemId } ?: return this
+        if (stage != OrderStage.Active || slot !in item.type.compatibleSlots || !assembly.canInstall(slot)) return this
         return copy(
             assembly = assembly.install(slot),
-            parts = installedParts,
+            parts = parts + (slot to item.part),
+            inventory = inventory.filterNot { it.id == itemId },
             startupVerifiedFor = null,
         )
     }
@@ -175,7 +186,7 @@ internal data class RepairSession(
 
     fun deliver(): RepairSession =
         if (stage == OrderStage.Active && deliveryRequirements().ready) {
-            RepairSession(stage = OrderStage.Delivered)
+            RepairSession(stage = OrderStage.Delivered, inventory = inventory, purchases = purchases)
         } else {
             this
         }
@@ -184,20 +195,34 @@ internal data class RepairSession(
         add(stage.name)
         add("SystemOrder")
         add("Preferred="+preferredDisk.name)
-        for (disk in listOf(ComputerPart.SolidStateDrive, ComputerPart.HardDrive)) {
-            parts[disk]?.let { add("System="+disk.name+"="+it.system.name) }
-        }
-        val originalSpecifications = parts.keys == StarterOrder.originalParts.keys && parts.all { (slot, part) ->
-            part.specification == StarterOrder.originalParts.getValue(slot).specification
-        }
-        if (startupVerified && originalSpecifications) add(StartupVerifiedMarker)
-        for ((slot, part) in parts) add("$DurabilityPrefix${slot.name}:${part.durability}")
+        add("ShopInventory")
+        if (startupVerified) add(StartupVerifiedMarker)
+        for ((slot, part) in parts) add("Mounted|${slot.name}|${part.encode()}")
+        for (item in inventory) add("Item|${item.id}|${item.type.name}|${item.part.encode()}")
+        for (order in purchases) add("Purchase|${order.number}|${order.product.name}|${order.received}")
         addAll(assembly.save())
     }
 
     companion object {
         fun restore(entries: List<String>): RepairSession {
             val stage = OrderStage.entries.firstOrNull { it.name == entries.firstOrNull() } ?: return RepairSession()
+            if ("ShopInventory" in entries) {
+                val purchases = mutableListOf<Purchase>()
+                val inventory = mutableListOf<InventoryItem>()
+                val parts = mutableMapOf<ComputerPart, CustomerPart>()
+                for (entry in entries) {
+                    val fields = entry.split('|')
+                    when (fields.first()) {
+                        "Purchase" -> purchases += Purchase(fields[1].toInt(), Product.valueOf(fields[2]), fields[3].toBoolean())
+                        "Item" -> inventory += InventoryItem(fields[1].toInt(), ComputerPart.valueOf(fields[2]), decodePart(fields, 3))
+                        "Mounted" -> parts[ComputerPart.valueOf(fields[1])] = decodePart(fields, 2)
+                    }
+                }
+                val session = RepairSession(stage = stage, parts = parts, purchases = purchases, inventory = inventory,
+                    assembly = ComputerAssembly.restore(entries),
+                    preferredDisk = ComputerPart.entries.firstOrNull { "Preferred="+it.name in entries } ?: ComputerPart.SolidStateDrive)
+                return if (StartupVerifiedMarker in entries) session.recordSuccessfulStartup() else session
+            }
             if (stage != OrderStage.Active) return if (entries.getOrNull(1) == "SystemOrder") RepairSession(stage = stage) else RepairSession()
             val currentOrder = entries.getOrNull(1) == "SystemOrder"
             val startupVerified = currentOrder && StartupVerifiedMarker in entries
@@ -217,7 +242,20 @@ internal data class RepairSession(
                     if (system == null) part else part.copy(system = system)
                 },
             )
-            return if (startupVerified) session.recordSuccessfulStartup() else session
+            val loose = session.assembly.inventory.mapIndexed { index, type ->
+                InventoryItem(index + 1, type, session.parts.getValue(type))
+            }
+            val migrated = session.copy(parts = session.parts.filterKeys(session.assembly::isInstalled), inventory = loose)
+            return if (startupVerified) migrated.recordSuccessfulStartup() else migrated
         }
     }
+}
+
+private fun CustomerPart.encode(): String = with(specification) {
+    listOf(product?.name.orEmpty(), durability, system.name, performanceTier, capacityGb, memoryRateMt, powerWatts).joinToString("|")
+}
+
+private fun decodePart(fields: List<String>, start: Int): CustomerPart {
+    val spec = HardwareSpecification(fields[start+3].toInt(), fields[start+4].toInt(), fields[start+5].toInt(), fields[start+6].toInt())
+    return CustomerPart(spec, fields[start+1].toInt(), DiskSystem.valueOf(fields[start+2]), Product.entries.firstOrNull { it.name == fields[start] })
 }

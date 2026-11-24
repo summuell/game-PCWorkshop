@@ -188,6 +188,7 @@ internal fun WorkbenchScene(
     artwork: WorkbenchArtwork,
     assembly: ComputerAssembly?,
     selectedPart: ComputerPart?,
+    placementPart: ComputerPart?,
     screwdriverSelected: Boolean,
     hoveredSlot: ComputerPart?,
     onViewportChanged: (LayoutCoordinates) -> Unit,
@@ -246,13 +247,10 @@ internal fun WorkbenchScene(
                                 }
                             }
                         }
-                        if (selectedPart != null) {
-                            if (assembly.isVisible(selectedPart)) {
-                                drawPartHighlight(selectedPart)
-                            } else if (assembly.canInstall(selectedPart)) {
-                                for (slot in selectedPart.compatibleSlots.filter(assembly::canInstall)) {
-                                    drawPlacementGuide(slot, slot == hoveredSlot)
-                                }
+                        if (selectedPart != null && assembly.isVisible(selectedPart)) drawPartHighlight(selectedPart)
+                        if (placementPart != null) {
+                            for (slot in placementPart.compatibleSlots.filter(assembly::canInstall)) {
+                                drawPlacementGuide(slot, slot == hoveredSlot)
                             }
                         }
                     }

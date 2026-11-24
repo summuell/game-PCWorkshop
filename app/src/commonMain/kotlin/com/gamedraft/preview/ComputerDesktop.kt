@@ -127,27 +127,12 @@ private fun FileRow(location: Location?, detail: String = "", name: String = loc
 
 @Composable
 private fun HardwareReport(session: RepairSession) {
-    val ram = listOf(ComputerPart.MemoryLeft, ComputerPart.MemoryRight).filter {
-        session.assembly.isInstalled(it) && session.parts[it]?.working == true
-    }
-    val total = ram.sumOf { session.parts.getValue(it).specification.capacityGb }
-    GameText("内存合计  $total GB", fontSize = 16, color = WindowAccent)
-    val components = listOf(ComputerPart.Motherboard, ComputerPart.Processor, ComputerPart.GraphicsCard) +
-        ram + session.availableDisks + ComputerPart.PowerSupply
-    for (slot in components) {
-        val part = session.parts[slot] ?: continue
-        if (!session.assembly.isInstalled(slot) || !part.working) continue
-        val spec = part.specification
-        val value = when (slot) {
-            ComputerPart.MemoryLeft, ComputerPart.MemoryRight -> "${spec.capacityGb} GB · ${spec.frequencyMhz} MHz"
-            ComputerPart.SolidStateDrive, ComputerPart.HardDrive -> "${spec.capacityGb} GB"
-            ComputerPart.PowerSupply -> "${spec.powerWatts} W"
-            else -> "性能等级 ${spec.performanceTier}"
-        }
+    GameText("系统摘要", fontSize = 16, color = WindowAccent)
+    for ((label, value) in session.hardwareReport()) {
         Row(Modifier.fillMaxWidth().background(Color(0xFF29404C)).padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween) {
-            GameText(slot.label, fontSize = 13)
-            GameText(value, fontSize = 13, color = MutedText)
+            GameText(label, Modifier.weight(.27f), fontSize = 13)
+            GameText(value, Modifier.weight(.73f), fontSize = 13, color = MutedText)
         }
     }
 }

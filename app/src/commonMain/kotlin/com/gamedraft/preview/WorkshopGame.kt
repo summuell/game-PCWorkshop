@@ -95,7 +95,7 @@ private val SessionSaver = listSaver<RepairSession, String>(
     restore = RepairSession::restore,
 )
 
-private data class InventoryDrag(val part: ComputerPart, val position: Offset)
+private data class InventoryDrag(val item: InventoryItem, val position: Offset)
 private val ToolSlotSize = 56.dp
 private val ToolGap = 8.dp
 private val RailPadding = 8.dp
@@ -103,6 +103,7 @@ private val RailPadding = 8.dp
 @Composable
 fun WorkshopGame(onStartGame: () -> Unit = {}) {
     var started by rememberSaveable { mutableStateOf(false) }
+    val sessionState = rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
     val font = FontFamily(Font(Res.font.screen_labels, FontWeight.Bold))
 
     CompositionLocalProvider(GameFont provides font) {
@@ -112,7 +113,12 @@ fun WorkshopGame(onStartGame: () -> Unit = {}) {
         ) {
             LandscapeSurface {
                 if (started) {
-                    WorkbenchScreen(onHome = { started = false })
+                    WorkbenchScreen(sessionState, onHome = {
+                        if (sessionState.value.stage == OrderStage.Delivered) {
+                            sessionState.value = sessionState.value.copy(stage = OrderStage.Available)
+                        }
+                        started = false
+                    })
                 } else {
                     StartScreen(onStart = { onStartGame(); started = true })
                 }
@@ -168,9 +174,9 @@ private fun StartScreen(onStart: () -> Unit) {
 }
 
 @Composable
-private fun WorkbenchScreen(onHome: () -> Unit) {
+private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<RepairSession>, onHome: () -> Unit) {
     val artwork = loadWorkbenchArtwork()
-    var session by rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
+    var session by sessionState
     var tabletOpen by rememberSaveable { mutableStateOf(false) }
     var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
     var monitorOpen by remember { mutableStateOf(false) }
@@ -178,6 +184,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     RunComputer(power, session, onPassed = { session = session.recordSuccessfulStartup() },
         onInstall = { disk -> session = session.finishInstallation(disk) })
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedItemId by rememberSaveable { mutableStateOf<Int?>(null) }
     var screwdriverSelected by rememberSaveable { mutableStateOf(false) }
     var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
@@ -188,9 +195,10 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     val hasMachine = session.stage == OrderStage.Active
     val selection = ComputerPart.entries.firstOrNull { it.name == selectedName }
     val currentDrag = draggedPart
-    val hoveredSlot = currentDrag?.let { placementSlot(it.part, assembly, viewport, it.position) }
+    val hoveredSlot = currentDrag?.let { placementSlot(it.item.type, assembly, viewport, it.position) }
 
     fun selectPart(part: ComputerPart) {
+        selectedItemId = null
         selectedName = part.name
     }
 
@@ -228,20 +236,26 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
         }
     }
 
-    fun moveInventoryPart(part: ComputerPart, position: Offset) {
-        val active = draggedPart
-        if (tabletOpen || session.assembly.isInstalled(part) || (active != null && active.part != part)) return
-        if (active == null) selectPart(part)
-        draggedPart = InventoryDrag(part, position)
+    fun selectItem(item: InventoryItem) {
+        selectedItemId = item.id
+        selectedName = null
     }
 
-    fun finishInventoryDrag(part: ComputerPart, released: Boolean) {
-        val active = draggedPart?.takeIf { it.part == part } ?: return
+    fun moveInventoryPart(item: InventoryItem, position: Offset) {
+        val active = draggedPart
+        if (!hasMachine || tabletOpen || (active != null && active.item.id != item.id)) return
+        if (active == null) selectItem(item)
+        draggedPart = InventoryDrag(item, position)
+    }
+
+    fun finishInventoryDrag(item: InventoryItem, released: Boolean) {
+        val active = draggedPart?.takeIf { it.item.id == item.id } ?: return
         draggedPart = null
         if (!released || tabletOpen) return
-        val slot = placementSlot(part, session.assembly, viewport, active.position) ?: return
-        session = session.install(part, slot)
-        selectedName = slot.name.takeIf { part.screws.isNotEmpty() }
+        val slot = placementSlot(item.type, session.assembly, viewport, active.position) ?: return
+        session = session.install(item.id, slot)
+        selectedItemId = null
+        selectedName = slot.name.takeIf { slot.screws.isNotEmpty() }
     }
 
     if (monitorOpen) {
@@ -255,6 +269,8 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
             page = tabletPage,
             onPageChanged = { tabletPage = it },
             onClose = { tabletOpen = false },
+            onBuy = { session = session.buy(it) },
+            onReceive = { session = session.receive(it) },
             onAccept = {
                 val accepted = session.accept()
                 if (accepted !== session) {
@@ -267,6 +283,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                 if (delivered !== session) {
                     session = delivered
                     selectedName = null
+                    selectedItemId = null
                     screwdriverSelected = false
                 }
             },
@@ -280,6 +297,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize()) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly.takeIf { hasMachine }, selection,
+                    session.inventory.firstOrNull { it.id == selectedItemId }?.type,
                     screwdriverSelected, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
                     Modifier.fillMaxSize())
                 GameText("维修工作台", Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Start)).background(Panel).padding(horizontal = 8.dp, vertical = 3.dp)
@@ -300,8 +318,8 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
                         tabletOpen = true
                     }) { TabletThumbnail(Modifier.size(32.dp)) }
                 }
-                Inventory(artwork, assembly.inventory, session.parts, selection,
-                    ::selectPart, ::moveInventoryPart, ::finishInventoryDrag)
+                Inventory(artwork, session.inventory, selectedItemId,
+                    ::selectItem, ::moveInventoryPart, ::finishInventoryDrag)
             }
         }
         holdingTarget?.let { target ->
@@ -325,7 +343,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
             Canvas(Modifier.matchParentSize()) {
                 drawPartPreview(
                     artwork,
-                    currentDrag.part,
+                    currentDrag.item.type,
                     workbench?.takeIf { it.isAttached }?.windowToLocal(currentDrag.position) ?: return@Canvas,
                     Size(95.dp.toPx(), 76.dp.toPx()),
                 )
@@ -347,12 +365,11 @@ private fun ToolSlot(label: String, onClick: () -> Unit, enabled: Boolean = true
 @Composable
 private fun Inventory(
     artwork: WorkbenchArtwork,
-    parts: List<ComputerPart>,
-    customerParts: Map<ComputerPart, CustomerPart>,
-    selection: ComputerPart?,
-    onSelect: (ComputerPart) -> Unit,
-    onMove: (ComputerPart, Offset) -> Unit,
-    onFinish: (ComputerPart, Boolean) -> Unit,
+    parts: List<InventoryItem>,
+    selectedId: Int?,
+    onSelect: (InventoryItem) -> Unit,
+    onMove: (InventoryItem, Offset) -> Unit,
+    onFinish: (InventoryItem, Boolean) -> Unit,
 ) {
     Column(
         Modifier.fillMaxWidth(),
@@ -372,8 +389,8 @@ private fun Inventory(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            items(parts, key = { it.name }) { part ->
-                InventorySlot(artwork, part, customerParts.getValue(part), part == selection, onSelect, onMove, onFinish)
+            items(parts, key = { it.id }) { item ->
+                InventorySlot(artwork, item, item.id == selectedId, onSelect, onMove, onFinish)
             }
         }
     }
@@ -382,12 +399,11 @@ private fun Inventory(
 @Composable
 private fun InventorySlot(
     artwork: WorkbenchArtwork,
-    part: ComputerPart,
-    condition: CustomerPart,
+    item: InventoryItem,
     active: Boolean,
-    onSelect: (ComputerPart) -> Unit,
-    onMove: (ComputerPart, Offset) -> Unit,
-    onFinish: (ComputerPart, Boolean) -> Unit,
+    onSelect: (InventoryItem) -> Unit,
+    onMove: (InventoryItem, Offset) -> Unit,
+    onFinish: (InventoryItem, Boolean) -> Unit,
 ) {
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val currentMove by rememberUpdatedState(onMove)
@@ -399,7 +415,7 @@ private fun InventorySlot(
             .background(if (active) Color(0xFF302820) else SlotBackground)
             .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
             .onGloballyPositioned { coordinates = it }
-            .pointerInput(part) {
+            .pointerInput(item.id) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     // Drag across the tray to place a part, or along it to scroll.
@@ -412,29 +428,29 @@ private fun InventorySlot(
 
                     var released = false
                     try {
-                        currentMove(part, layout.localToWindow(start.position))
+                        currentMove(item, layout.localToWindow(start.position))
                         released = drag(start.id) { change ->
-                            if (layout.isAttached) currentMove(part, layout.localToWindow(change.position))
+                            if (layout.isAttached) currentMove(item, layout.localToWindow(change.position))
                             change.consume()
                         }
                         val release = currentEvent.changes.firstOrNull { it.id == start.id }
                         if (released && release != null && layout.isAttached) {
-                            currentMove(part, layout.localToWindow(release.position))
+                            currentMove(item, layout.localToWindow(release.position))
                         }
                     } finally {
-                        currentFinish(part, released)
+                        currentFinish(item, released)
                     }
                 }
             }
-            .clickable(role = Role.Button) { onSelect(part) }
+            .clickable(role = Role.Button) { onSelect(item) }
             .padding(horizontal = 2.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PartThumbnail(artwork, part, Modifier.size(width = 44.dp, height = 22.dp))
+        PartThumbnail(artwork, item.type, Modifier.size(width = 44.dp, height = 22.dp))
         Spacer(Modifier.height(2.dp))
-        GameText(part.label, fontSize = 12)
-        GameText("耐久 ${condition.durability}", fontSize = 11, color = if (condition.working) MutedText else Amber)
+        GameText(item.label, fontSize = 12)
+        GameText("耐久 ${item.part.durability}", fontSize = 11, color = if (item.part.working) MutedText else Amber)
     }
 }
 
