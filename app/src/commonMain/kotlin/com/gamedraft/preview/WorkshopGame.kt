@@ -104,7 +104,7 @@ private val SessionSaver = listSaver<RepairSession, String>(
     restore = RepairSession::restore,
 )
 
-internal class WorkbenchPress(val target: WorkbenchHold, val point: Offset) {
+internal class WorkbenchPress(val target: WorkbenchHold, val point: Offset, val pointerId: PointerId) {
     private val started = kotlin.time.TimeSource.Monotonic.markNow()
     val fraction: Float get() = (started.elapsedNow().inWholeMilliseconds.toFloat() / target.durationMillis).coerceIn(0f, 1f)
     var completed by mutableStateOf(false)
@@ -304,11 +304,11 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     fun beginHold(target: WorkbenchHold, id: PointerId): WorkbenchPress? {
-        if (draggedPart != null || press?.completed == false) return null
+        if (draggedPart != null || press != null) return null
         selectPart(target.part)
         if (!canHold(target)) return null
         val point = contactPoints[id] ?: return null
-        return WorkbenchPress(target, point).also { press = it }
+        return WorkbenchPress(target, point, id).also { press = it }
     }
 
     fun performHold(target: WorkbenchHold): Boolean {
@@ -366,15 +366,16 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                         for (change in awaitPointerEvent(PointerEventPass.Initial).changes) {
                             if (change.pressed && !change.previousPressed) {
                                 contactPoints[change.id] = change.position
-                                if (press?.completed == true) press = null
                             } else if (!change.pressed) {
                                 contactPoints.remove(change.id)
+                                if (press?.pointerId == change.id) press = null
                             }
                         }
                     }
                 }
             } finally {
                 contactPoints.clear()
+                press = null
             }
         },
     ) {
