@@ -30,7 +30,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -97,20 +101,20 @@ private val ToolGap = 8.dp
 private val RailPadding = 8.dp
 
 @Composable
-fun WorkshopGame() {
+fun WorkshopGame(onStartGame: () -> Unit = {}) {
     var started by rememberSaveable { mutableStateOf(false) }
     val font = FontFamily(Font(Res.font.screen_labels, FontWeight.Bold))
 
     CompositionLocalProvider(GameFont provides font) {
         Box(
-            Modifier.fillMaxSize().background(Background).safeDrawingPadding(),
+            Modifier.fillMaxSize().background(Background),
             contentAlignment = Alignment.Center,
         ) {
             LandscapeSurface {
                 if (started) {
                     WorkbenchScreen(onHome = { started = false })
                 } else {
-                    StartScreen(onStart = { started = true })
+                    StartScreen(onStart = { onStartGame(); started = true })
                 }
             }
         }
@@ -120,7 +124,7 @@ fun WorkshopGame() {
 @Composable
 private fun LandscapeSurface(content: @Composable () -> Unit) {
     Layout(content = { Box(Modifier.fillMaxSize()) { content() } },
-        modifier = Modifier.widthIn(max = 1440.dp).fillMaxSize()) { children, bounds ->
+        modifier = Modifier.fillMaxSize()) { children, bounds ->
         val turn = bounds.maxHeight > bounds.maxWidth
         val gameBounds = if (turn) Constraints.fixed(bounds.maxHeight, bounds.maxWidth) else bounds
         val game = children.single().measure(gameBounds)
@@ -273,16 +277,16 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     Box(
         Modifier.fillMaxSize().onGloballyPositioned { workbench = it },
     ) {
-        Row(Modifier.fillMaxSize().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize()) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly.takeIf { hasMachine }, selection,
                     screwdriverSelected, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
                     Modifier.fillMaxSize())
-                GameText("维修工作台", Modifier.align(Alignment.TopStart).background(Panel).padding(horizontal = 8.dp, vertical = 3.dp)
+                GameText("维修工作台", Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Start)).background(Panel).padding(horizontal = 8.dp, vertical = 3.dp)
                     .semantics { heading() }, fontSize = 14)
             }
             val railWidth = ToolSlotSize * 2 + ToolGap + RailPadding * 2
-            Column(Modifier.width(railWidth).fillMaxSize().background(Panel).border(1.dp, Border).padding(RailPadding),
+            Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End)).width(railWidth).fillMaxSize().border(1.dp, Border).padding(RailPadding),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 GameButton("主页", onHome, Modifier.fillMaxWidth())
                 if (hasMachine) GameButton("开机检测", { monitorOpen = true }, Modifier.fillMaxWidth())

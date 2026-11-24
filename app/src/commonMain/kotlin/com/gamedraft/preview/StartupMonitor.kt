@@ -68,33 +68,30 @@ internal class ComputerPower {
     var stalled by mutableStateOf(false)
     var usb by mutableStateOf(false)
         private set
-    var choosing by mutableStateOf(false)
-        private set
-    var source by mutableStateOf(BootSource.Disk)
+    val choosing: Boolean
+        get() = powered && stage == StartupStage.BootDrive && usb && source == null
+    var source by mutableStateOf<BootSource?>(BootSource.Disk)
         private set
     var installer by mutableStateOf(false)
     var destination by mutableStateOf<ComputerPart?>(null)
     var percent by mutableStateOf(0)
-    private var nextSource: BootSource? = null
 
     fun toggleUsb() {
         usb = !usb
-        if (!usb && requested && source == BootSource.Usb) stop()
-        nextSource = null
-        choosing = usb && !requested
+        if (!usb) {
+            if (requested && source == BootSource.Usb) stop()
+            source = BootSource.Disk
+        }
     }
 
     fun choose(device: BootSource) {
-        source = device
-        nextSource = device
-        choosing = false
+        if (choosing) source = device
     }
 
-    fun start(device: BootSource? = nextSource) {
+    fun start(device: BootSource? = null) {
         stop()
         requested = true
-        choosing = usb && device == null
-        source = device ?: BootSource.Disk
+        source = if (usb) device else BootSource.Disk
     }
 
     fun stop() {
@@ -103,8 +100,7 @@ internal class ComputerPower {
         powered = false
         stage = StartupStage.Power
         stalled = false
-        choosing = false
-        nextSource = null
+        source = BootSource.Disk
         installer = false
         destination = null
         percent = 0
@@ -186,7 +182,7 @@ internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClos
         }
         Row(Modifier.fillMaxSize(), horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                 Monitor(power,session,Modifier.weight(1f).fillMaxHeight())
-                Column(Modifier.width(118.dp).fillMaxHeight().background(Panel).verticalScroll(rememberScrollState()).padding(8.dp),
+                Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End)).width(118.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(8.dp),
                     verticalArrangement=Arrangement.spacedBy(8.dp), horizontalAlignment=Alignment.CenterHorizontally) {
                     GameText("开机检测",fontSize=16)
                     controls()
@@ -201,14 +197,14 @@ private fun Monitor(power: ComputerPower, session: RepairSession, modifier: Modi
     Column(modifier.background(MonitorFrame).border(2.dp, MonitorEdge).padding(5.dp)) {
         Box(Modifier.weight(1f).fillMaxWidth().background(MonitorGlass).clipToBounds(), contentAlignment=Alignment.Center) {
             when {
-                power.choosing && (!power.requested || power.stage == StartupStage.BootDrive) ->
+                !power.powered -> Unit
+                power.choosing ->
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(12.dp),
                         verticalArrangement=Arrangement.spacedBy(8.dp)) {
                         GameText("选择启动设备",fontSize=20)
                         GameButton("U 盘启动", { power.choose(BootSource.Usb) })
                         GameButton("硬盘启动", { power.choose(BootSource.Disk) })
                     }
-                !power.powered -> Unit
                 power.installer -> SystemInstaller(power, session)
                 power.stalled -> GameText(if (power.stage == StartupStage.BootDrive) "找不到启动设备" else "无信号", color=MutedText)
                 power.stage == StartupStage.SystemLoading -> SystemLoading()

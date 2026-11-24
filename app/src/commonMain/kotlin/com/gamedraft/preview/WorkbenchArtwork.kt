@@ -198,10 +198,21 @@ internal fun WorkbenchScene(
 ) {
     val visibleParts = assembly?.let { machine -> ComputerPart.entries.filter(machine::isVisible) }.orEmpty()
 
-    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier.clipToBounds(), contentAlignment = Alignment.Center) {
         val aspectRatio = WorkbenchHeight.toFloat() / ArtworkWidth
         val sceneWidth = minOf(maxWidth, maxHeight * aspectRatio)
         val sceneHeight = sceneWidth / aspectRatio
+
+        // The mat fills the work area. Hardware and its touch targets keep their original proportions.
+        Canvas(Modifier.matchParentSize()) {
+            withTransform({
+                val horizontalScale = size.width / WorkbenchHeight
+                val verticalScale = size.height / ArtworkWidth
+                translate((WorkbenchTop + WorkbenchHeight) * horizontalScale, 0f)
+                scale(horizontalScale, verticalScale, pivot = Offset.Zero)
+                rotate(90f, pivot = Offset.Zero)
+            }) { drawSheet(artwork.table) }
+        }
 
         fun Modifier.positionOnScene(area: Rect): Modifier =
             offset(
@@ -222,7 +233,6 @@ internal fun WorkbenchScene(
                     rotate(90f, pivot = Offset.Zero)
                     scale(scale, scale, pivot = Offset.Zero)
                 }) {
-                    drawSheet(artwork.table)
                     if (assembly != null) {
                         clipPath(ComputerCaseOutline) { drawSheet(artwork.emptyCase) }
                         for (part in visibleParts) {
