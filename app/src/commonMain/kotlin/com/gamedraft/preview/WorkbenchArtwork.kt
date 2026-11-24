@@ -1,12 +1,7 @@
 package com.gamedraft.preview
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
@@ -18,6 +13,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +36,6 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.semantics.Role
@@ -193,43 +190,36 @@ internal fun WorkbenchScene(
     selectedPart: ComputerPart?,
     screwdriverSelected: Boolean,
     hoveredSlot: ComputerPart?,
-    onViewportChanged: (Rect) -> Unit,
-    onOpenMonitor: () -> Unit,
+    onViewportChanged: (LayoutCoordinates) -> Unit,
     onSelect: (ComputerPart) -> Unit,
-    onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
+    onHoldChanged: (WorkbenchHold, Offset?) -> Unit,
     onHoldComplete: (WorkbenchHold) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val visibleParts = assembly?.let { machine -> ComputerPart.entries.filter(machine::isVisible) }.orEmpty()
 
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        val aspectRatio = ArtworkWidth.toFloat() / WorkbenchHeight
+        val aspectRatio = WorkbenchHeight.toFloat() / ArtworkWidth
         val sceneWidth = minOf(maxWidth, maxHeight * aspectRatio)
         val sceneHeight = sceneWidth / aspectRatio
 
         fun Modifier.positionOnScene(area: Rect): Modifier =
             offset(
-                x = sceneWidth * (area.left / ArtworkWidth),
-                y = sceneHeight * ((area.top - WorkbenchTop) / WorkbenchHeight),
+                x = sceneWidth * ((WorkbenchTop + WorkbenchHeight - area.bottom) / WorkbenchHeight),
+                y = sceneHeight * (area.left / ArtworkWidth),
             ).size(
-                width = sceneWidth * (area.width / ArtworkWidth),
-                height = sceneHeight * (area.height / WorkbenchHeight),
+                width = sceneWidth * (area.height / WorkbenchHeight),
+                height = sceneHeight * (area.width / ArtworkWidth),
             )
 
         Box(
-            Modifier.size(sceneWidth, sceneHeight).clipToBounds().onGloballyPositioned { coordinates ->
-                onViewportChanged(
-                    Rect(
-                        coordinates.positionInRoot(),
-                        Size(coordinates.size.width.toFloat(), coordinates.size.height.toFloat()),
-                    ),
-                )
-            },
+            Modifier.size(sceneWidth, sceneHeight).clipToBounds().onGloballyPositioned(onViewportChanged),
         ) {
             Canvas(Modifier.matchParentSize()) {
-                val scale = size.width / ArtworkWidth
+                val scale = size.height / ArtworkWidth
                 withTransform({
-                    translate(0f, -WorkbenchTop * scale)
+                    translate((WorkbenchTop + WorkbenchHeight) * scale, 0f)
+                    rotate(90f, pivot = Offset.Zero)
                     scale(scale, scale, pivot = Offset.Zero)
                 }) {
                     drawSheet(artwork.table)
@@ -288,23 +278,7 @@ internal fun WorkbenchScene(
                     }
                 }
             }
-            if (assembly != null) {
-                Row(
-                    Modifier.align(Alignment.BottomEnd).padding(4.dp)
-                        .height(44.dp).background(Panel).border(2.dp, Border)
-                        .clickable(role = Role.Button, onClick = onOpenMonitor).padding(horizontal = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Canvas(Modifier.size(16.dp)) {
-                        val stroke = 1.5.dp.toPx()
-                        drawRect(Amber, Offset(stroke / 2, stroke / 2),
-                            Size(size.width - stroke, size.height * .68f), style = Stroke(stroke))
-                        drawLine(Amber, Offset(center.x, size.height * .76f), Offset(center.x, size.height), stroke)
-                    }
-                    GameText("开机检测", fontSize = 14)
-                }
-            }
+
         }
     }
 }
@@ -314,11 +288,12 @@ private fun HoldZone(
     target: WorkbenchHold,
     modifier: Modifier,
     onSelect: (ComputerPart) -> Unit,
-    onHoldChanged: (WorkbenchHold, Boolean) -> Unit,
+    onHoldChanged: (WorkbenchHold, Offset?) -> Unit,
     onHoldComplete: (WorkbenchHold) -> Unit,
 ) {
     val currentHoldChanged by rememberUpdatedState(onHoldChanged)
     val currentHoldComplete by rememberUpdatedState(onHoldComplete)
+    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val base = LocalViewConfiguration.current
     val configuration = remember(base, target.durationMillis) {
         object : ViewConfiguration by base {
@@ -327,7 +302,7 @@ private fun HoldZone(
     }
     CompositionLocalProvider(LocalViewConfiguration provides configuration) {
         Box(
-            modifier
+            modifier.onGloballyPositioned { coordinates = it }
                 .semantics {
                     contentDescription = target.label
                     role = Role.Button
@@ -342,12 +317,12 @@ private fun HoldZone(
                 }
                 .pointerInput(target) {
                     detectTapGestures(
-                        onPress = {
-                            currentHoldChanged(target, true)
+                        onPress = { point ->
+                            currentHoldChanged(target, coordinates?.localToWindow(point))
                             try {
                                 tryAwaitRelease()
                             } finally {
-                                currentHoldChanged(target, false)
+                                currentHoldChanged(target, null)
                             }
                         },
                         onLongPress = { currentHoldComplete(target) },
@@ -357,10 +332,13 @@ private fun HoldZone(
     }
 }
 
-internal fun placementSlot(part: ComputerPart, assembly: ComputerAssembly, viewport: Rect?, position: Offset): ComputerPart? {
-    if (viewport == null || !viewport.contains(position)) return null
-    val local = position - viewport.topLeft
-    val point = Offset(local.x * ArtworkWidth / viewport.width, WorkbenchTop + local.y * WorkbenchHeight / viewport.height)
+internal fun placementSlot(part: ComputerPart, assembly: ComputerAssembly, viewport: LayoutCoordinates?, position: Offset): ComputerPart? {
+    if (viewport == null || !viewport.isAttached) return null
+    val local = viewport.windowToLocal(position)
+    val width = viewport.size.width.toFloat()
+    val height = viewport.size.height.toFloat()
+    if (width <= 0 || height <= 0 || local.x !in 0f..width || local.y !in 0f..height) return null
+    val point = Offset(local.y * ArtworkWidth / height, WorkbenchTop + WorkbenchHeight * (1f - local.x / width))
     return part.compatibleSlots.firstOrNull { assembly.canInstall(it) && placementArea(it).contains(point) }
 }
 

@@ -19,17 +19,20 @@ internal data class HardwareSpecification(
             powerWatts >= minimum.powerWatts
 }
 
+internal enum class DiskSystem { Blank, Original, Reinstalled }
+
 internal data class CustomerPart(
     val specification: HardwareSpecification,
     val durability: Int = 100,
+    val system: DiskSystem = DiskSystem.Blank,
 ) {
     val working: Boolean
         get() = durability >= MinimumWorkingDurability
 }
 
 internal object StarterOrder {
-    const val title = "开机后显示器无信号"
-    const val request = "按下电源键后，主机风扇会转，显示器一直提示无信号。"
+    const val title = "重装操作系统"
+    const val request = "这台电脑用了好几年，想请你帮我重新装一套干净的系统。"
 
     val originalParts = ComputerPart.entries.associateWith { part ->
         val specification = when (part) {
@@ -40,7 +43,7 @@ internal object StarterOrder {
             ComputerPart.PowerSupply -> HardwareSpecification(powerWatts = 550)
             else -> HardwareSpecification()
         }
-        CustomerPart(specification)
+        CustomerPart(specification, system = if (part == ComputerPart.SolidStateDrive) DiskSystem.Original else DiskSystem.Blank)
     }
 
     fun createParts(savedDurability: Map<String, Int> = emptyMap()): Map<ComputerPart, CustomerPart> =
@@ -62,26 +65,26 @@ internal enum class StartupStage(val durationMillis: Long) {
 internal data class HardwareConfiguration(
     val assembly: ComputerAssembly,
     val parts: Map<ComputerPart, CustomerPart>,
-    val graphicsCableReseated: Boolean,
+    val bootDisk: ComputerPart?,
 )
 
 private const val StartupVerifiedMarker = "StartupVerified"
 private const val DurabilityPrefix = "Durability:"
 
-internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNormally: Boolean) {
+internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNormally: Boolean, val reinstalled: Boolean) {
     val ready: Boolean
-        get() = partsIntact && startsNormally
+        get() = partsIntact && startsNormally && reinstalled
 }
 
 internal data class RepairSession(
     val stage: OrderStage = OrderStage.Available,
     val assembly: ComputerAssembly = ComputerAssembly(),
-    val graphicsCableReseated: Boolean = false,
+    val preferredDisk: ComputerPart = ComputerPart.SolidStateDrive,
     val parts: Map<ComputerPart, CustomerPart> = StarterOrder.originalParts,
     private val startupVerifiedFor: HardwareConfiguration? = null,
 ) {
     private val hardware: HardwareConfiguration
-        get() = HardwareConfiguration(assembly, parts, graphicsCableReseated)
+        get() = HardwareConfiguration(assembly, parts, bootDisk)
 
     private val startupVerified: Boolean
         get() = startupVerifiedFor == hardware
@@ -109,7 +112,6 @@ internal data class RepairSession(
         return copy(
             assembly = assembly.install(slot),
             parts = installedParts,
-            graphicsCableReseated = graphicsCableReseated || part == ComputerPart.GraphicsCable,
             startupVerifiedFor = null,
         )
     }
@@ -126,11 +128,27 @@ internal data class RepairSession(
         !hasWorkingPart(ComputerPart.Motherboard) ||
             !hasWorkingPart(ComputerPart.Processor) ||
             !(hasWorkingPart(ComputerPart.MemoryLeft) || hasWorkingPart(ComputerPart.MemoryRight)) -> StartupStage.SelfTest
-        !graphicsCableReseated ||
-            !hasWorkingPart(ComputerPart.GraphicsCard) ||
+        !hasWorkingPart(ComputerPart.GraphicsCard) ||
             !hasWorkingPart(ComputerPart.GraphicsCable) -> StartupStage.Video
-        !hasWorkingPart(ComputerPart.SolidStateDrive) -> StartupStage.BootDrive
+        bootDisk == null -> StartupStage.BootDrive
         else -> null
+    }
+
+    val availableDisks: List<ComputerPart>
+        get() = listOf(ComputerPart.SolidStateDrive, ComputerPart.HardDrive).filter {
+            hasWorkingPart(it) && (it != ComputerPart.HardDrive || hasWorkingPart(ComputerPart.DriveCable))
+        }
+
+    val bootDisk: ComputerPart?
+        get() = (listOf(preferredDisk) + availableDisks).firstOrNull {
+            it in availableDisks && parts.getValue(it).system != DiskSystem.Blank
+        }
+
+    fun finishInstallation(disk: ComputerPart): RepairSession {
+        if (stage != OrderStage.Active || disk !in availableDisks || !coolingAvailable ||
+            firstStartupFailure()?.let { it != StartupStage.BootDrive } == true) return this
+        return copy(parts = parts + (disk to parts.getValue(disk).copy(system = DiskSystem.Reinstalled)),
+            preferredDisk = disk, startupVerifiedFor = null)
     }
 
     val coolingAvailable: Boolean get() = hasWorkingPart(ComputerPart.Cooler)
@@ -149,7 +167,7 @@ internal data class RepairSession(
                 current.specification.meets(original.specification) &&
                 assembly.screwsRemaining(part) == part.screws.size
         }
-        return DeliveryRequirements(partsIntact, startupVerified)
+        return DeliveryRequirements(partsIntact, startupVerified, bootDisk?.let { parts[it]?.system } == DiskSystem.Reinstalled)
     }
 
     private fun hasWorkingPart(part: ComputerPart): Boolean =
@@ -164,7 +182,11 @@ internal data class RepairSession(
 
     fun save(): List<String> = buildList {
         add(stage.name)
-        add(graphicsCableReseated.toString())
+        add("SystemOrder")
+        add("Preferred="+preferredDisk.name)
+        for (disk in listOf(ComputerPart.SolidStateDrive, ComputerPart.HardDrive)) {
+            parts[disk]?.let { add("System="+disk.name+"="+it.system.name) }
+        }
         val originalSpecifications = parts.keys == StarterOrder.originalParts.keys && parts.all { (slot, part) ->
             part.specification == StarterOrder.originalParts.getValue(slot).specification
         }
@@ -176,9 +198,10 @@ internal data class RepairSession(
     companion object {
         fun restore(entries: List<String>): RepairSession {
             val stage = OrderStage.entries.firstOrNull { it.name == entries.firstOrNull() } ?: return RepairSession()
-            if (stage != OrderStage.Active) return RepairSession(stage = stage)
-            val startupVerified = entries.getOrNull(2) == StartupVerifiedMarker
-            val (durabilityEntries, assemblyEntries) = entries.drop(if (startupVerified) 3 else 2)
+            if (stage != OrderStage.Active) return if (entries.getOrNull(1) == "SystemOrder") RepairSession(stage = stage) else RepairSession()
+            val currentOrder = entries.getOrNull(1) == "SystemOrder"
+            val startupVerified = currentOrder && StartupVerifiedMarker in entries
+            val (durabilityEntries, assemblyEntries) = entries.drop(2)
                 .partition { it.startsWith(DurabilityPrefix) }
             val durability = durabilityEntries.mapNotNull { entry ->
                 val value = entry.substringAfterLast(':').toIntOrNull()?.takeIf { it in 0..100 }
@@ -188,8 +211,11 @@ internal data class RepairSession(
             val session = RepairSession(
                 stage = stage,
                 assembly = ComputerAssembly.restore(assemblyEntries),
-                graphicsCableReseated = entries.getOrNull(1) == "true",
-                parts = StarterOrder.createParts(durability),
+                preferredDisk = ComputerPart.entries.firstOrNull { "Preferred="+it.name in entries } ?: ComputerPart.SolidStateDrive,
+                parts = StarterOrder.createParts(durability).mapValues { (slot, part) ->
+                    val system = DiskSystem.entries.firstOrNull { "System="+slot.name+"="+it.name in entries }
+                    if (system == null) part else part.copy(system = system)
+                },
             )
             return if (startupVerified) session.recordSuccessfulStartup() else session
         }

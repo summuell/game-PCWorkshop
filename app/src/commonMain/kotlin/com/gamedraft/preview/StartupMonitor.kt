@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.first
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.draw.clipToBounds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -52,6 +56,8 @@ private val MonitorGlass = Color(0xFF0C141B)
 private val StartupGreen = Color(0xFF7CE0A6)
 private const val ThermalShutdownMillis = 5000L
 
+internal enum class BootSource { Disk, Usb }
+
 internal class ComputerPower {
     var cycle by mutableStateOf(0L)
         private set
@@ -60,10 +66,35 @@ internal class ComputerPower {
     var powered by mutableStateOf(false)
     var stage by mutableStateOf(StartupStage.Power)
     var stalled by mutableStateOf(false)
+    var usb by mutableStateOf(false)
+        private set
+    var choosing by mutableStateOf(false)
+        private set
+    var source by mutableStateOf(BootSource.Disk)
+        private set
+    var installer by mutableStateOf(false)
+    var destination by mutableStateOf<ComputerPart?>(null)
+    var percent by mutableStateOf(0)
+    private var nextSource: BootSource? = null
 
-    fun start() {
+    fun toggleUsb() {
+        usb = !usb
+        if (!usb && requested && source == BootSource.Usb) stop()
+        nextSource = null
+        choosing = usb && !requested
+    }
+
+    fun choose(device: BootSource) {
+        source = device
+        nextSource = device
+        choosing = false
+    }
+
+    fun start(device: BootSource? = nextSource) {
         stop()
         requested = true
+        choosing = usb && device == null
+        source = device ?: BootSource.Disk
     }
 
     fun stop() {
@@ -72,12 +103,19 @@ internal class ComputerPower {
         powered = false
         stage = StartupStage.Power
         stalled = false
+        choosing = false
+        nextSource = null
+        installer = false
+        destination = null
+        percent = 0
     }
 }
 
 @Composable
-internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed: () -> Unit) {
+internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed: () -> Unit,
+    onInstall: (ComputerPart) -> Unit) {
     val finishStartup by rememberUpdatedState(onPassed)
+    val finishInstallation by rememberUpdatedState(onInstall)
     val cycle = power.cycle
     LaunchedEffect(power, cycle) {
         if (!power.requested) return@LaunchedEffect
@@ -87,131 +125,129 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed:
             return@LaunchedEffect
         }
         power.powered = true
-        if (!session.coolingAvailable) {
-            launch {
-                delay(ThermalShutdownMillis)
-                if (power.cycle == cycle) power.stop()
-            }
+        if (!session.coolingAvailable) launch {
+            delay(ThermalShutdownMillis)
+            if (power.cycle == cycle) power.stop()
         }
         for (step in StartupStage.entries) {
             if (power.cycle != cycle) return@LaunchedEffect
             power.stage = step
+            if (step == StartupStage.BootDrive && power.choosing) {
+                androidx.compose.runtime.snapshotFlow { power.choosing }.first { !it }
+            }
             delay(step.durationMillis)
-            if (step == failure) {
-                if (power.cycle == cycle) power.stalled = true
+            val usbBoot = power.source == BootSource.Usb && power.usb
+            if (step == failure && !(usbBoot && step == StartupStage.BootDrive)) {
+                power.stalled = true
+                return@LaunchedEffect
+            }
+            if (usbBoot && step == StartupStage.SystemLoading) {
+                power.installer = true
                 return@LaunchedEffect
             }
         }
         if (power.cycle == cycle && session.coolingAvailable) finishStartup()
     }
-}
-
-@Composable
-internal fun StartupMonitor(power: ComputerPower, onClose: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(12.dp).background(Panel).border(2.dp, Border).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            GameText("显示器", fontSize = 22, modifier = Modifier.semantics { heading() })
-            GameButton("返回工作台", onClose)
-        }
-        Box(
-            Modifier.fillMaxWidth().weight(1f).background(SlotBackground).border(1.dp, Border),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                Modifier.widthIn(max = 480.dp).fillMaxWidth().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Monitor(power)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        Modifier.height(46.dp).background(if (power.powered) Color(0xFF193D38) else Panel)
-                            .border(2.dp, if (power.powered) StartupGreen else Border)
-                            .semantics { stateDescription = if (power.powered) "已开机" else "已关机" }
-                            .clickable(role = Role.Button) { if (power.requested) power.stop() else power.start() }
-                            .padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    ) {
-                        Canvas(Modifier.size(16.dp)) {
-                            val color = if (power.powered) StartupGreen else MutedText
-                            if (power.powered) drawCircle(StartupGreen.copy(alpha = .2f))
-                            drawArc(color, -55f, 290f, false, Offset(size.width * .1f, size.height * .16f),
-                                Size(size.width * .8f, size.height * .8f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-                            drawLine(color, Offset(center.x, 0f), Offset(center.x, center.y), 2.dp.toPx())
-                        }
-                        GameText("电源", color = if (power.powered) StartupGreen else MutedText)
-                    }
-                    GameButton("重启", power::start, enabled = power.powered)
-                }
-            }
+    LaunchedEffect(power, cycle, power.destination) {
+        val disk = power.destination ?: return@LaunchedEffect
+        if (!power.installer || !power.usb || disk !in session.availableDisks) return@LaunchedEffect
+        for (tick in 1..50) {
+            delay(140)
+            if (cycle != power.cycle || !power.usb) return@LaunchedEffect
+            if (tick == 50) finishInstallation(disk)
+            power.percent = tick * 2
         }
     }
 }
 
 @Composable
-private fun Monitor(power: ComputerPower) {
-    val stage = power.stage
-    val stalled = power.stalled
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Column(
-            Modifier.fillMaxWidth().background(MonitorFrame).border(2.dp, MonitorEdge)
-                .padding(start = 7.dp, top = 7.dp, end = 7.dp, bottom = 2.dp),
-        ) {
-            Box(
-                Modifier.fillMaxWidth().aspectRatio(16f / 10f).background(MonitorGlass)
-                    .border(2.dp, Background),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (power.powered) when (stage) {
-                    StartupStage.Power, StartupStage.SelfTest, StartupStage.Video -> if (stalled) {
-                        GameText(
-                            "无信号",
-                            modifier = Modifier.background(Panel).border(1.dp, Border)
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            fontSize = 14,
-                            color = MutedText,
-                        )
+internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClose: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Background).padding(8.dp)) {
+        val controls: @Composable () -> Unit = {
+            GameButton("工作台", onClose)
+            Box(Modifier.height(42.dp).widthIn(min=74.dp)
+                .background(if (power.powered) Color(0xFF193D38) else Panel)
+                .border(2.dp, if (power.powered) StartupGreen else Border)
+                .semantics { stateDescription = if (power.powered) "已开机" else "已关机" }
+                .clickable(role = Role.Button) { if (power.requested) power.stop() else power.start() }
+                .padding(horizontal=8.dp), contentAlignment=Alignment.Center) {
+                Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Canvas(Modifier.size(14.dp)) {
+                        val color = if (power.powered) StartupGreen else MutedText
+                        drawArc(color,-55f,290f,false,Offset(1f,size.height*.15f),Size(size.width-2f,size.height*.82f),
+                            style=androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                        drawLine(color,Offset(center.x,0f),center,2.dp.toPx())
                     }
-                    StartupStage.BootDrive -> if (stalled) {
-                        Box(Modifier.align(Alignment.TopStart).padding(12.dp).size(8.dp, 2.dp).background(MutedText))
-                    }
-                    StartupStage.SystemLoading -> SystemLoading()
-                    StartupStage.Welcome -> Column(
-                        Modifier.fillMaxSize().background(Brush.verticalGradient(
-                            listOf(Color(0xFF294D69), Color(0xFF163746)),
-                        )),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-                    ) {
-                        Canvas(Modifier.size(30.dp)) {
-                            drawCircle(MutedText, size.width * .19f, Offset(center.x, size.height * .26f))
-                            drawArc(MutedText, 180f, 180f, true, Offset(0f, size.height * .52f),
-                                Size(size.width, size.height * .75f))
-                        }
-                        GameText("欢迎", fontSize = 16)
-                    }
-                    StartupStage.Desktop -> Desktop()
+                    GameText("电源", fontSize=14, color=if(power.powered) StartupGreen else MutedText)
                 }
             }
-            Box(
-                Modifier.fillMaxWidth().height(12.dp).padding(end = 4.dp),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                val led = if (power.powered && stage >= StartupStage.BootDrive) StartupGreen else Border
-                Box(Modifier.size(5.dp).background(led))
+            GameButton("重启", { power.start(null) }, enabled = power.powered)
+            GameButton(if (power.usb) "拔出 U 盘" else "插入 U 盘", power::toggleUsb)
+        }
+        Row(Modifier.fillMaxSize(), horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                Monitor(power,session,Modifier.weight(1f).fillMaxHeight())
+                Column(Modifier.width(118.dp).fillMaxHeight().background(Panel).verticalScroll(rememberScrollState()).padding(8.dp),
+                    verticalArrangement=Arrangement.spacedBy(8.dp), horizontalAlignment=Alignment.CenterHorizontally) {
+                    GameText("开机检测",fontSize=16)
+                    controls()
+                }
+            }
+
+    }
+}
+
+@Composable
+private fun Monitor(power: ComputerPower, session: RepairSession, modifier: Modifier) {
+    Column(modifier.background(MonitorFrame).border(2.dp, MonitorEdge).padding(5.dp)) {
+        Box(Modifier.weight(1f).fillMaxWidth().background(MonitorGlass).clipToBounds(), contentAlignment=Alignment.Center) {
+            when {
+                power.choosing && (!power.requested || power.stage == StartupStage.BootDrive) ->
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(12.dp),
+                        verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        GameText("选择启动设备",fontSize=20)
+                        GameButton("U 盘启动", { power.choose(BootSource.Usb) })
+                        GameButton("硬盘启动", { power.choose(BootSource.Disk) })
+                    }
+                !power.powered -> Unit
+                power.installer -> SystemInstaller(power, session)
+                power.stalled -> GameText(if (power.stage == StartupStage.BootDrive) "找不到启动设备" else "无信号", color=MutedText)
+                power.stage == StartupStage.SystemLoading -> SystemLoading()
+                power.stage == StartupStage.Welcome -> GameText("欢迎",fontSize=22)
+                power.stage == StartupStage.Desktop -> ComputerDesktop(session,power.usb)
             }
         }
-        Box(Modifier.size(32.dp, 14.dp).background(MonitorFrame))
-        Box(Modifier.size(106.dp, 7.dp).background(MonitorEdge))
+        Box(Modifier.fillMaxWidth().height(6.dp),contentAlignment=Alignment.CenterEnd) {
+            Box(Modifier.size(4.dp).background(if(power.powered) StartupGreen else Border))
+        }
+    }
+}
+
+@Composable
+private fun SystemInstaller(power: ComputerPower, session: RepairSession) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF183446)).verticalScroll(rememberScrollState()).padding(18.dp),
+        verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        GameText("系统安装",fontSize=22)
+        if (power.destination == null) {
+            GameText(if(session.availableDisks.isEmpty()) "未找到可用磁盘" else "选择系统安装位置",color=MutedText)
+            for (disk in session.availableDisks) {
+                val capacity = session.parts.getValue(disk).specification.capacityGb
+                GameButton("安装到 ${disk.label} · ${capacity} GB", { power.destination = disk })
+            }
+        } else if (power.percent < 100) {
+            GameText(when(power.percent) {
+                in 0..29 -> "正在复制系统文件"
+                in 30..69 -> "正在展开系统文件"
+                in 70..89 -> "正在安装组件"
+                else -> "正在配置启动文件"
+            })
+            Box(Modifier.fillMaxWidth().height(10.dp).background(Background)) {
+                Box(Modifier.fillMaxWidth(power.percent/100f).fillMaxHeight().background(StartupGreen))
+            }
+            GameText("${power.percent}%",color=StartupGreen)
+        } else {
+            GameText("安装完成",color=StartupGreen)
+            GameButton("从硬盘重新启动", { power.start(BootSource.Disk) },primary=true)
+        }
     }
 }
 
@@ -244,36 +280,5 @@ private fun SystemLoading() {
                         center.y + sin(angle).toFloat() * size.height * .39f))
             }
         }
-    }
-}
-
-@Composable
-private fun Desktop() {
-    Canvas(Modifier.fillMaxSize()) {
-        val pixel = size.width / 64
-        fun block(x: Int, y: Int, width: Int, height: Int, color: Color) {
-            drawRect(color, Offset(x * pixel, y * pixel), Size(width * pixel, height * pixel))
-        }
-
-        drawRect(Color(0xFF326673))
-        val hillside = Color(0xFF224B5B)
-        block(49, 12, 15, 25, hillside)
-        block(42, 17, 7, 20, hillside)
-        block(35, 22, 7, 15, hillside)
-        block(26, 29, 9, 8, hillside)
-        block(0, 32, 26, 5, Color(0xFF285767))
-
-        block(4, 4, 3, 1, Amber)
-        block(4, 5, 7, 4, Amber)
-        block(5, 6, 5, 2, Color(0xFFFFD29E))
-        block(4, 12, 5, 6, MutedText)
-        block(5, 14, 3, 1, MonitorFrame)
-        block(5, 16, 3, 1, MonitorFrame)
-
-        block(0, 37, 64, 3, MonitorGlass)
-        block(2, 38, 2, 1, StartupGreen)
-        block(6, 38, 2, 1, MutedText)
-        block(57, 38, 1, 1, StartupGreen)
-        block(60, 38, 2, 1, MutedText)
     }
 }

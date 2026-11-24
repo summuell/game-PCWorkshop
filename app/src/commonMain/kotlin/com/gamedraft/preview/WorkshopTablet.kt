@@ -85,6 +85,7 @@ private fun DeliveryPage(session: RepairSession, onDeliver: () -> Unit) {
         }
         OrderStage.Active -> {
             val requirements = session.deliveryRequirements()
+            DeliveryRequirement("系统已重装", requirements.reinstalled)
             DeliveryRequirement("配件完好", requirements.partsIntact)
             DeliveryRequirement("正常启动", requirements.startsNormally)
             GameButton("确认交付", onDeliver, Modifier.fillMaxWidth(), primary = true, enabled = requirements.ready)
