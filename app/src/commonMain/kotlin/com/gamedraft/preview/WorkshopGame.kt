@@ -49,6 +49,10 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -101,8 +105,18 @@ private val ToolGap = 8.dp
 private val RailPadding = 8.dp
 
 @Composable
-fun WorkshopGame(onStartGame: () -> Unit = {}) {
+internal fun WorkshopGame(
+    storage: SaveStorage,
+    onExitGame: () -> Unit,
+    onStartGame: () -> Unit = {},
+    registerBackHandler: @Composable (Boolean, () -> Unit) -> Unit = { _, _ -> },
+) {
     var started by rememberSaveable { mutableStateOf(false) }
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var exited by rememberSaveable { mutableStateOf(false) }
+    var loadGeneration by remember { mutableStateOf(0) }
+    val focus = remember { FocusRequester() }
+    registerBackHandler(!exited) { menuOpen = !menuOpen }
     val sessionState = rememberSaveable(stateSaver = SessionSaver) { mutableStateOf(RepairSession()) }
     val font = FontFamily(Font(Res.font.screen_labels, FontWeight.Bold))
 
@@ -112,15 +126,41 @@ fun WorkshopGame(onStartGame: () -> Unit = {}) {
             contentAlignment = Alignment.Center,
         ) {
             LandscapeSurface {
-                if (started) {
-                    WorkbenchScreen(sessionState, onHome = {
-                        if (sessionState.value.stage == OrderStage.Delivered) {
-                            sessionState.value = sessionState.value.copy(stage = OrderStage.Available)
+                LaunchedEffect(exited, menuOpen) { focus.requestFocus() }
+                Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+                    if (event.key != Key.Escape || exited) return@onPreviewKeyEvent false
+                    if (event.type == KeyEventType.KeyUp) menuOpen = !menuOpen
+                    true
+                }.focusRequester(focus).focusable()) {
+                    if (exited) {
+                        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            GameText("已退出游戏", fontSize = 24)
+                            GameButton("重新进入", { exited = false })
                         }
-                        started = false
-                    })
-                } else {
-                    StartScreen(onStart = { onStartGame(); started = true })
+                    } else {
+                        if (started) key(loadGeneration) { WorkbenchScreen(sessionState, menuOpen) }
+                        else StartScreen(onStart = { onStartGame(); started = true })
+                        FloatingMenuButton { menuOpen = true }
+                        if (menuOpen) GameMenu(storage, sessionState.value, onClose = { menuOpen = false }, onHome = {
+                            if (sessionState.value.stage == OrderStage.Delivered) {
+                                sessionState.value = sessionState.value.copy(stage = OrderStage.Available)
+                            }
+                            started = false
+                            menuOpen = false
+                        }, onLoaded = {
+                            sessionState.value = it
+                            loadGeneration++
+                            started = true
+                            menuOpen = false
+                        }, onExit = {
+                            started = false
+                            menuOpen = false
+                            sessionState.value = RepairSession()
+                            exited = true
+                            onExitGame()
+                        })
+                    }
                 }
             }
         }
@@ -174,14 +214,14 @@ private fun StartScreen(onStart: () -> Unit) {
 }
 
 @Composable
-private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<RepairSession>, onHome: () -> Unit) {
+private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<RepairSession>, paused: Boolean) {
     val artwork = loadWorkbenchArtwork()
     var session by sessionState
     var tabletOpen by rememberSaveable { mutableStateOf(false) }
     var tabletPage by rememberSaveable { mutableStateOf(TabletPage.Orders) }
     var monitorOpen by remember { mutableStateOf(false) }
     val power = remember(session.stage, session.assembly) { ComputerPower() }
-    RunComputer(power, session, onPassed = { session = session.recordSuccessfulStartup() },
+    RunComputer(power, session, paused, onPassed = { session = session.recordSuccessfulStartup() },
         onInstall = { disk -> session = session.finishInstallation(disk) })
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedItemId by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -300,13 +340,11 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     session.inventory.firstOrNull { it.id == selectedItemId }?.type,
                     screwdriverSelected, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
                     Modifier.fillMaxSize())
-                GameText("维修工作台", Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Start)).background(Panel).padding(horizontal = 8.dp, vertical = 3.dp)
-                    .semantics { heading() }, fontSize = 14)
+
             }
             val railWidth = ToolSlotSize * 2 + ToolGap + RailPadding * 2
             Column(Modifier.background(Panel).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.End)).width(railWidth).fillMaxSize().border(1.dp, Border).padding(RailPadding),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                GameButton("主页", onHome, Modifier.fillMaxWidth())
                 if (hasMachine) GameButton("开机检测", { monitorOpen = true }, Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(ToolGap)) {

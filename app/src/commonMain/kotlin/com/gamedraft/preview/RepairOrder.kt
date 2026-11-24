@@ -35,14 +35,17 @@ internal object StarterOrder {
     const val title = "重装操作系统"
     const val request = "这台电脑用了好几年，想请你帮我重新装一套干净的系统。"
 
-    val originalParts = ComputerPart.entries.associateWith { part ->
+    private val prototypes = ComputerPart.entries.associateWith { part ->
         val type = if (part == ComputerPart.MemoryRight) ComputerPart.MemoryLeft else part
-        val original = Product.entries.firstOrNull { it.slot == type }?.newPart() ?: CustomerPart(HardwareSpecification())
-        if (part == ComputerPart.SolidStateDrive) original.copy(system = DiskSystem.Original) else original
+        Product.entries.firstOrNull { it.slot == type }?.newPart() ?: CustomerPart(HardwareSpecification())
     }
 
-    fun createParts(savedDurability: Map<String, Int> = emptyMap()): Map<ComputerPart, CustomerPart> =
-        originalParts.mapValues { (part, original) ->
+    val originalParts = (prototypes - ComputerPart.SolidStateDrive).mapValues { (slot, part) ->
+        if (slot == ComputerPart.HardDrive) part.copy(system = DiskSystem.Original) else part
+    }
+
+    fun createParts(savedDurability: Map<String, Int> = emptyMap(), legacy: Boolean = false): Map<ComputerPart, CustomerPart> =
+        (if (legacy) prototypes + (ComputerPart.SolidStateDrive to prototypes.getValue(ComputerPart.SolidStateDrive).copy(system = DiskSystem.Original)) else originalParts).mapValues { (part, original) ->
             original.copy(durability = savedDurability[part.name] ?: Random.nextInt(MinimumWorkingDurability, 101))
         }
 }
@@ -73,8 +76,8 @@ internal data class DeliveryRequirements(val partsIntact: Boolean, val startsNor
 
 internal data class RepairSession(
     val stage: OrderStage = OrderStage.Available,
-    val assembly: ComputerAssembly = ComputerAssembly(),
-    val preferredDisk: ComputerPart = ComputerPart.SolidStateDrive,
+    val assembly: ComputerAssembly = ComputerAssembly(inventory = listOf(ComputerPart.SolidStateDrive)),
+    val preferredDisk: ComputerPart = ComputerPart.HardDrive,
     val parts: Map<ComputerPart, CustomerPart> = StarterOrder.originalParts,
     val purchases: List<Purchase> = emptyList(),
     val inventory: List<InventoryItem> = emptyList(),
@@ -88,7 +91,8 @@ internal data class RepairSession(
 
     fun accept(): RepairSession =
         if (stage == OrderStage.Available) {
-            copy(stage = OrderStage.Active, parts = StarterOrder.createParts())
+            copy(stage = OrderStage.Active, assembly = ComputerAssembly(inventory = listOf(ComputerPart.SolidStateDrive)),
+                preferredDisk = ComputerPart.HardDrive, parts = StarterOrder.createParts())
         } else {
             this
         }
@@ -178,7 +182,10 @@ internal data class RepairSession(
                 current.specification.meets(original.specification) &&
                 assembly.screwsRemaining(part) == part.screws.size
         }
-        return DeliveryRequirements(partsIntact, startupVerified, bootDisk?.let { parts[it]?.system } == DiskSystem.Reinstalled)
+        val optionalPartsIntact = parts.all { (slot, part) ->
+            part.working && assembly.screwsRemaining(slot) == slot.screws.size
+        }
+        return DeliveryRequirements(partsIntact && optionalPartsIntact, startupVerified, bootDisk?.let { parts[it]?.system } == DiskSystem.Reinstalled)
     }
 
     private fun hasWorkingPart(part: ComputerPart): Boolean =
@@ -237,7 +244,7 @@ internal data class RepairSession(
                 stage = stage,
                 assembly = ComputerAssembly.restore(assemblyEntries),
                 preferredDisk = ComputerPart.entries.firstOrNull { "Preferred="+it.name in entries } ?: ComputerPart.SolidStateDrive,
-                parts = StarterOrder.createParts(durability).mapValues { (slot, part) ->
+                parts = StarterOrder.createParts(durability, legacy = true).mapValues { (slot, part) ->
                     val system = DiskSystem.entries.firstOrNull { "System="+slot.name+"="+it.name in entries }
                     if (system == null) part else part.copy(system = system)
                 },

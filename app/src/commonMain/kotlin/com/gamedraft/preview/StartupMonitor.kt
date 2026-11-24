@@ -107,9 +107,24 @@ internal class ComputerPower {
     }
 }
 
+private suspend fun gameDelay(milliseconds: Long, paused: androidx.compose.runtime.State<Boolean>) {
+    var remaining = milliseconds
+    while (true) {
+        androidx.compose.runtime.snapshotFlow { paused.value }.first { !it }
+        if (remaining <= 0) return
+        val start = kotlin.time.TimeSource.Monotonic.markNow()
+        val interrupted = kotlinx.coroutines.withTimeoutOrNull(remaining) {
+            androidx.compose.runtime.snapshotFlow { paused.value }.first { it }
+        }
+        if (interrupted == null) return
+        remaining -= start.elapsedNow().inWholeMilliseconds
+    }
+}
+
 @Composable
-internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed: () -> Unit,
+internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: Boolean, onPassed: () -> Unit,
     onInstall: (ComputerPart) -> Unit) {
+    val menuPaused = rememberUpdatedState(paused)
     val finishStartup by rememberUpdatedState(onPassed)
     val finishInstallation by rememberUpdatedState(onInstall)
     val cycle = power.cycle
@@ -122,7 +137,7 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed:
         }
         power.powered = true
         if (!session.coolingAvailable) launch {
-            delay(ThermalShutdownMillis)
+            gameDelay(ThermalShutdownMillis, menuPaused)
             if (power.cycle == cycle) power.stop()
         }
         for (step in StartupStage.entries) {
@@ -131,7 +146,7 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed:
             if (step == StartupStage.BootDrive && power.choosing) {
                 androidx.compose.runtime.snapshotFlow { power.choosing }.first { !it }
             }
-            delay(step.durationMillis)
+            gameDelay(step.durationMillis, menuPaused)
             val usbBoot = power.source == BootSource.Usb && power.usb
             if (step == failure && !(usbBoot && step == StartupStage.BootDrive)) {
                 power.stalled = true
@@ -148,7 +163,7 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, onPassed:
         val disk = power.destination ?: return@LaunchedEffect
         if (!power.installer || !power.usb || disk !in session.availableDisks) return@LaunchedEffect
         for (tick in 1..50) {
-            delay(140)
+            gameDelay(140, menuPaused)
             if (cycle != power.cycle || !power.usb) return@LaunchedEffect
             if (tick == 50) finishInstallation(disk)
             power.percent = tick * 2
@@ -225,9 +240,9 @@ private fun SystemInstaller(power: ComputerPower, session: RepairSession) {
         GameText("系统安装",fontSize=22)
         if (power.destination == null) {
             GameText(if(session.availableDisks.isEmpty()) "未找到可用磁盘" else "选择系统安装位置",color=MutedText)
-            for (disk in session.availableDisks) {
+            for ((index, disk) in session.availableDisks.withIndex()) {
                 val capacity = session.parts.getValue(disk).specification.capacityGb
-                GameButton("安装到 ${disk.label} · ${capacity} GB", { power.destination = disk })
+                GameButton("磁盘 $index · ${session.parts.getValue(disk).product?.model ?: disk.label} · ${capacity} GB", { power.destination = disk })
             }
         } else if (power.percent < 100) {
             GameText(when(power.percent) {

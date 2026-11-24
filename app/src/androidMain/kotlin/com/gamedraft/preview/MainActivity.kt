@@ -9,6 +9,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 
@@ -27,7 +28,18 @@ class MainActivity : ComponentActivity() {
             }
         }
         enterFullscreen()
-        setContent { WorkshopGame() }
+        val preferences = getSharedPreferences("workshop-saves", MODE_PRIVATE)
+        val storage = object : SaveStorage {
+            override fun read(slot: Int) = preferences.getString("slot-$slot", null)
+            override fun write(slot: Int, value: String) {
+                check(preferences.edit().putString("slot-$slot", value).commit())
+            }
+            override fun timestamp() = java.text.DateFormat.getDateTimeInstance().format(java.util.Date())
+        }
+        setContent {
+            WorkshopGame(storage, onExitGame = ::finishAndRemoveTask,
+                registerBackHandler = { enabled, action -> BackHandler(enabled, action) })
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
