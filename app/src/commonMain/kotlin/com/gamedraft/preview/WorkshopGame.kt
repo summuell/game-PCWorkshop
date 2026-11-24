@@ -6,7 +6,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
@@ -93,7 +92,9 @@ private val SessionSaver = listSaver<RepairSession, String>(
 )
 
 private data class InventoryDrag(val part: ComputerPart, val position: Offset)
-private val InventorySlotHeight = 72.dp
+private val ToolSlotSize = 56.dp
+private val ToolGap = 8.dp
+private val RailPadding = 8.dp
 
 @Composable
 fun WorkshopGame() {
@@ -272,38 +273,31 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
     Box(
         Modifier.fillMaxSize().onGloballyPositioned { workbench = it },
     ) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val sidebarWidth = (maxWidth * .30f).coerceIn(195.dp, 350.dp)
-            val scene: @Composable (Modifier) -> Unit = { area ->
+        Row(Modifier.fillMaxSize().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.weight(1f).fillMaxSize()) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly.takeIf { hasMachine }, selection,
-                    screwdriverSelected, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold, area)
+                    screwdriverSelected, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
+                    Modifier.fillMaxSize())
+                GameText("维修工作台", Modifier.align(Alignment.TopStart).background(Panel).padding(horizontal = 8.dp, vertical = 3.dp)
+                    .semantics { heading() }, fontSize = 14)
             }
-            val controls: @Composable (Modifier) -> Unit = { area ->
-                Column(area.background(Panel).border(1.dp, Border).padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        GameText("维修工作台", fontSize = 18)
-                        GameButton("主页", onHome)
+            val railWidth = ToolSlotSize * 2 + ToolGap + RailPadding * 2
+            Column(Modifier.width(railWidth).fillMaxSize().background(Panel).border(1.dp, Border).padding(RailPadding),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                GameButton("主页", onHome, Modifier.fillMaxWidth())
+                if (hasMachine) GameButton("开机检测", { monitorOpen = true }, Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(ToolGap)) {
+                    ToolSlot("螺丝刀", { screwdriverSelected = !screwdriverSelected }, hasMachine, screwdriverSelected) {
+                        ScrewdriverThumbnail(artwork, Modifier.size(38.dp))
                     }
-                    if (hasMachine) GameButton("开机检测", { monitorOpen = true }, Modifier.fillMaxWidth())
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ToolSlot("螺丝刀", { screwdriverSelected = !screwdriverSelected }, hasMachine, screwdriverSelected) {
-                            ScrewdriverThumbnail(artwork, Modifier.size(38.dp))
-                        }
-                        ToolSlot("平板", {
-                            tabletPage = if (hasMachine) TabletPage.Delivery else TabletPage.Orders
-                            tabletOpen = true
-                        }) { TabletThumbnail(Modifier.size(32.dp)) }
-                    }
-                    Inventory(artwork, assembly.inventory, session.parts, selection,
-                        ::selectPart, ::moveInventoryPart, ::finishInventoryDrag)
+                    ToolSlot("平板", {
+                        tabletPage = if (hasMachine) TabletPage.Delivery else TabletPage.Orders
+                        tabletOpen = true
+                    }) { TabletThumbnail(Modifier.size(32.dp)) }
                 }
-            }
-            Row(Modifier.fillMaxSize().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                scene(Modifier.weight(1f).fillMaxSize())
-                controls(Modifier.width(sidebarWidth).fillMaxSize())
+                Inventory(artwork, assembly.inventory, session.parts, selection,
+                    ::selectPart, ::moveInventoryPart, ::finishInventoryDrag)
             }
         }
         holdingTarget?.let { target ->
@@ -339,7 +333,7 @@ private fun WorkbenchScreen(onHome: () -> Unit) {
 @Composable
 private fun ToolSlot(label: String, onClick: () -> Unit, enabled: Boolean = true,
     active: Boolean = false, icon: @Composable () -> Unit) {
-    Box(Modifier.size(48.dp).background(if (active) Color(0xFF392E22) else SlotBackground)
+    Box(Modifier.size(ToolSlotSize).background(if (active) Color(0xFF392E22) else SlotBackground)
         .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
         .semantics { contentDescription = label; selected = active }
         .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
@@ -368,15 +362,16 @@ private fun Inventory(
             GameText("物品栏", fontSize = 16, modifier = Modifier.semantics { heading() })
             GameText("${parts.size} 件", fontSize = 14, color = MutedText)
         }
-        val slot: @Composable (ComputerPart) -> Unit = { part ->
-            InventorySlot(artwork, part, customerParts.getValue(part), part == selection, onSelect, onMove, onFinish)
-        }
-        val tray = Modifier.fillMaxWidth().background(SlotBackground).border(1.dp, Border).padding(4.dp)
-        LazyVerticalGrid(GridCells.Adaptive(90.dp), tray.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(parts, key = { it.name }) { slot(it) }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize().background(SlotBackground).border(1.dp, Border).padding(2.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            items(parts, key = { it.name }) { part ->
+                InventorySlot(artwork, part, customerParts.getValue(part), part == selection, onSelect, onMove, onFinish)
             }
-
+        }
     }
 }
 
@@ -395,8 +390,8 @@ private fun InventorySlot(
     val currentFinish by rememberUpdatedState(onFinish)
     Column(
         Modifier
-            .width(92.dp)
-            .height(InventorySlotHeight)
+            .fillMaxWidth()
+            .heightIn(min = 76.dp)
             .background(if (active) Color(0xFF302820) else SlotBackground)
             .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
             .onGloballyPositioned { coordinates = it }
@@ -428,14 +423,14 @@ private fun InventorySlot(
                 }
             }
             .clickable(role = Role.Button) { onSelect(part) }
-            .padding(horizontal = 5.dp, vertical = 5.dp),
+            .padding(horizontal = 2.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PartThumbnail(artwork, part, Modifier.size(width = 60.dp, height = 23.dp))
+        PartThumbnail(artwork, part, Modifier.size(width = 44.dp, height = 22.dp))
         Spacer(Modifier.height(2.dp))
-        GameText(part.label, fontSize = 14)
-        GameText("耐久 ${condition.durability}/100", fontSize = 12, color = if (condition.working) MutedText else Amber)
+        GameText(part.label, fontSize = 12)
+        GameText("耐久 ${condition.durability}", fontSize = 11, color = if (condition.working) MutedText else Amber)
     }
 }
 
