@@ -2,7 +2,10 @@ package com.gamedraft.preview
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
@@ -10,12 +13,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -37,8 +36,6 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalViewConfiguration
-import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -197,8 +194,9 @@ internal fun WorkbenchScene(
     hoveredSlot: ComputerPart?,
     onViewportChanged: (LayoutCoordinates) -> Unit,
     onSelect: (ComputerPart) -> Unit,
-    onHoldChanged: (WorkbenchHold, Offset?) -> Unit,
-    onHoldComplete: (WorkbenchHold) -> Unit,
+    onBeginHold: (WorkbenchHold, PointerId) -> WorkbenchPress?,
+    onEndHold: (WorkbenchPress, Boolean) -> Unit,
+    onAccessibleHold: (WorkbenchHold) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val visibleParts = assembly?.let { machine -> ComputerPart.entries.filter(machine::isVisible) }.orEmpty()
@@ -279,8 +277,9 @@ internal fun WorkbenchScene(
                         target = WorkbenchHold(part),
                         modifier = Modifier.positionOnScene(partArtwork.getValue(part).hitArea),
                         onSelect = onSelect,
-                        onHoldChanged = onHoldChanged,
-                        onHoldComplete = onHoldComplete,
+                        onBeginHold = onBeginHold,
+                        onEndHold = onEndHold,
+                        onAccessibleHold = onAccessibleHold,
                     )
                 }
             }
@@ -294,8 +293,9 @@ internal fun WorkbenchScene(
                                     target = WorkbenchHold(part, WorkbenchHold.Screw(index, action)),
                                     modifier = Modifier.positionOnScene(screwArea(screw, 34)),
                                     onSelect = onSelect,
-                                    onHoldChanged = onHoldChanged,
-                                    onHoldComplete = onHoldComplete,
+                                    onBeginHold = onBeginHold,
+                                    onEndHold = onEndHold,
+                                    onAccessibleHold = onAccessibleHold,
                                 )
                             }
                         }
@@ -312,48 +312,36 @@ private fun HoldZone(
     target: WorkbenchHold,
     modifier: Modifier,
     onSelect: (ComputerPart) -> Unit,
-    onHoldChanged: (WorkbenchHold, Offset?) -> Unit,
-    onHoldComplete: (WorkbenchHold) -> Unit,
+    onBeginHold: (WorkbenchHold, PointerId) -> WorkbenchPress?,
+    onEndHold: (WorkbenchPress, Boolean) -> Unit,
+    onAccessibleHold: (WorkbenchHold) -> Boolean,
 ) {
-    val currentHoldChanged by rememberUpdatedState(onHoldChanged)
-    val currentHoldComplete by rememberUpdatedState(onHoldComplete)
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val base = LocalViewConfiguration.current
-    val configuration = remember(base, target.durationMillis) {
-        object : ViewConfiguration by base {
-            override val longPressTimeoutMillis = target.durationMillis.toLong()
-        }
-    }
-    CompositionLocalProvider(LocalViewConfiguration provides configuration) {
-        Box(
-            modifier.onGloballyPositioned { coordinates = it }
-                .semantics {
-                    contentDescription = target.label
-                    role = Role.Button
-                    onClick {
-                        onSelect(target.part)
+    val begin by rememberUpdatedState(onBeginHold)
+    val end by rememberUpdatedState(onEndHold)
+    Box(
+        modifier.semantics {
+            contentDescription = target.label
+            role = Role.Button
+            onClick { onSelect(target.part); true }
+            onLongClick { onAccessibleHold(target) }
+        }.pointerInput(target) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                down.consume()
+                val press = begin(target, down.id) ?: return@awaitEachGesture
+                var finished = false
+                try {
+                    // Both an early release and a cancelled gesture end this wait before its deadline.
+                    finished = withTimeoutOrNull(target.durationMillis.toLong()) {
+                        waitForUpOrCancellation()?.consume()
                         true
-                    }
-                    onLongClick {
-                        onHoldComplete(target)
-                        true
-                    }
+                    } == null
+                } finally {
+                    end(press, finished)
                 }
-                .pointerInput(target) {
-                    detectTapGestures(
-                        onPress = { point ->
-                            currentHoldChanged(target, coordinates?.localToWindow(point))
-                            try {
-                                tryAwaitRelease()
-                            } finally {
-                                currentHoldChanged(target, null)
-                            }
-                        },
-                        onLongPress = { currentHoldComplete(target) },
-                    )
-                },
-        )
-    }
+            }
+        },
+    )
 }
 
 internal fun placementSlot(part: ComputerPart, assembly: ComputerAssembly, viewport: LayoutCoordinates?, position: Offset): ComputerPart? {

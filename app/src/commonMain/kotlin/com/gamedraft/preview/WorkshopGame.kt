@@ -1,6 +1,5 @@
 package com.gamedraft.preview
 
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -62,6 +61,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -100,6 +103,15 @@ private val SessionSaver = listSaver<RepairSession, String>(
     save = { it.save() },
     restore = RepairSession::restore,
 )
+
+internal class WorkbenchPress(val target: WorkbenchHold, val point: Offset) {
+    private val started = kotlin.time.TimeSource.Monotonic.markNow()
+    val fraction: Float get() = (started.elapsedNow().inWholeMilliseconds.toFloat() / target.durationMillis).coerceIn(0f, 1f)
+    var completed by mutableStateOf(false)
+        private set
+
+    fun complete() { completed = true }
+}
 
 private data class InventoryDrag(val item: InventoryItem, val position: Offset)
 private val ToolSlotSize = 56.dp
@@ -268,9 +280,10 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     var selectedItemId by rememberSaveable { mutableStateOf<Int?>(null) }
     var tool by rememberSaveable(session.stage) { mutableStateOf<BenchTool?>(null) }
     val screwdriverSelected = tool == BenchTool.Driver
-    var holdingTarget by remember { mutableStateOf<WorkbenchHold?>(null) }
+    var press by remember { mutableStateOf<WorkbenchPress?>(null) }
+    val contactPoints = remember { mutableMapOf<PointerId, Offset>() }
+    LaunchedEffect(monitorOpen, tabletOpen, paused, session.stage) { press = null }
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
-    var holdPoint by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var workbench by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val assembly = session.assembly
@@ -285,37 +298,36 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     fun canHold(target: WorkbenchHold): Boolean {
-        if (tabletOpen || session.stage != OrderStage.Active) return false
+        if (paused || tabletOpen || monitorOpen || session.stage != OrderStage.Active) return false
         val screw = target.screw ?: return session.assembly.canRemove(target.part)
         return screwdriverSelected && session.assembly.screwAction(target.part, screw.index) == screw.action
     }
 
-    fun changeHold(target: WorkbenchHold, point: Offset?) {
-        if (point == null) {
-            if (holdingTarget == target) holdingTarget = null
-            return
-        }
-        if (draggedPart == null && holdingTarget == null) {
-            selectPart(target.part)
-            holdPoint = point
-            holdingTarget = target.takeIf(::canHold)
-        }
+    fun beginHold(target: WorkbenchHold, id: PointerId): WorkbenchPress? {
+        if (draggedPart != null || press?.completed == false) return null
+        selectPart(target.part)
+        if (!canHold(target)) return null
+        val point = contactPoints[id] ?: return null
+        return WorkbenchPress(target, point).also { press = it }
     }
 
-    fun finishHold(target: WorkbenchHold) {
-        if (draggedPart != null || (holdingTarget != null && holdingTarget != target)) return
-        holdingTarget = null
+    fun performHold(target: WorkbenchHold): Boolean {
+        if (draggedPart != null || !canHold(target)) return false
         val part = target.part
-        selectPart(part)
-        if (!canHold(target)) return
-
         val screw = target.screw
         if (screw == null) {
             session = session.remove(part)
             selectedName = null
         } else {
+            selectPart(part)
             session = session.turnScrew(part, screw.index, screw.action)
         }
+        return true
+    }
+
+    fun endHold(gesture: WorkbenchPress, finished: Boolean) {
+        if (press !== gesture) return
+        if (finished && performHold(gesture.target)) gesture.complete() else press = null
     }
 
     fun selectItem(item: InventoryItem) {
@@ -346,14 +358,32 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     Box(
-        Modifier.fillMaxSize().onGloballyPositioned { workbench = it },
+        Modifier.fillMaxSize().onGloballyPositioned { workbench = it }.pointerInput(Unit) {
+            // Observe before tiny screw zones consume the press. These coordinates are shared with the overlay.
+            try {
+                awaitPointerEventScope {
+                    while (true) {
+                        for (change in awaitPointerEvent(PointerEventPass.Initial).changes) {
+                            if (change.pressed && !change.previousPressed) {
+                                contactPoints[change.id] = change.position
+                                if (press?.completed == true) press = null
+                            } else if (!change.pressed) {
+                                contactPoints.remove(change.id)
+                            }
+                        }
+                    }
+                }
+            } finally {
+                contactPoints.clear()
+            }
+        },
     ) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize()) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly.takeIf { hasMachine }, selection,
                     session.inventory.firstOrNull { it.id == selectedItemId }?.type,
                     screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
-                    { session = session.applyPasteToMountedCpu() }, hoveredSlot, { viewport = it }, ::selectPart, ::changeHold, ::finishHold,
+                    { session = session.applyPasteToMountedCpu() }, hoveredSlot, { viewport = it }, ::selectPart, ::beginHold, ::endHold, ::performHold,
                     Modifier.fillMaxSize())
 
             }
@@ -375,22 +405,8 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     }, ::moveInventoryPart, ::finishInventoryDrag)
             }
         }
-        holdingTarget?.let { target ->
-            key(target, holdPoint) {
-                val progress = remember { Animatable(0f) }
-                LaunchedEffect(Unit) { progress.animateTo(1f, tween(target.durationMillis, easing = LinearEasing)) }
-                Canvas(Modifier.matchParentSize()) {
-                    val r = 12.dp.toPx()
-                    val touch = workbench?.takeIf { it.isAttached }?.windowToLocal(holdPoint) ?: return@Canvas
-                    val x = if (touch.x + 3*r < size.width) touch.x + 2*r else touch.x - 2*r
-                    val y = if (touch.y > 3*r) touch.y - 2*r else touch.y + 2*r
-                    val at = Offset(x.coerceIn(r,size.width-r), y.coerceIn(r,size.height-r))
-                    drawCircle(Background.copy(alpha=.9f), r, at)
-                    drawCircle(Border, r, at, style = Stroke(3.dp.toPx()))
-                    drawArc(Amber, -90f, 360f*progress.value, false, at - Offset(r,r),
-                        Size(2*r,2*r), style = Stroke(3.dp.toPx()))
-                }
-            }
+        press?.let { gesture ->
+            key(gesture) { HoldRing(gesture, Modifier.matchParentSize()) }
         }
         if (currentDrag != null) {
             Canvas(Modifier.matchParentSize()) {
@@ -401,6 +417,35 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     Size(95.dp.toPx(), 76.dp.toPx()),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HoldRing(press: WorkbenchPress, modifier: Modifier) {
+    var fraction by remember { mutableFloatStateOf(press.fraction) }
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(press.completed) {
+        if (press.completed) {
+            scale.animateTo(1.16f, tween(110))
+            scale.animateTo(1f, tween(170))
+        } else {
+            while (fraction < 1f) withFrameNanos { fraction = press.fraction }
+        }
+    }
+
+    Canvas(modifier) {
+        val center = press.point
+        val radius = 36.dp.toPx() * scale.value
+        val stroke = 4.dp.toPx() * scale.value
+        drawCircle(Background.copy(alpha = .18f), radius, center)
+        drawCircle(Background.copy(alpha = .88f), radius, center, style = Stroke(stroke + 2.dp.toPx()))
+        drawCircle(Border, radius, center, style = Stroke(stroke))
+        if (press.completed) {
+            drawCircle(Color(0xFF7CE0A6), radius, center, style = Stroke(stroke))
+        } else {
+            drawArc(Amber, -90f, 360f * fraction, false, center - Offset(radius, radius),
+                Size(2 * radius, 2 * radius), style = Stroke(stroke))
         }
     }
 }
