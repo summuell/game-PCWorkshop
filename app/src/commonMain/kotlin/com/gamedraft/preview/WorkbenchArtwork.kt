@@ -237,12 +237,7 @@ internal fun WorkbenchScene(
                         if (part == ComputerPart.Chassis) continue
                         drawPart(artwork, part, chassis)
                         if (part == ComputerPart.Processor && cpuHasPaste) {
-                            val area = partArtwork.getValue(part).bounds
-                            val delta = Offset(area.width * .16f, area.height * .16f)
-                            val color = Color(0xFFECEBE1)
-                            drawLine(color, area.center - delta, area.center + delta, 7f)
-                            val cross = Offset(-delta.x, delta.y)
-                            drawLine(color, area.center - cross, area.center + cross, 7f)
+                            drawThermalPaste(partArtwork.getValue(part).bounds.center)
                         }
                         part.screws.forEachIndexed { index, screw ->
                             if (assembly.hasScrew(part, index)) drawScrewHead(screw)
@@ -334,14 +329,38 @@ private fun HoldZone(
     )
 }
 
-internal fun placementSlot(slots: List<ComputerPart>, viewport: LayoutCoordinates?, position: Offset): ComputerPart? {
+internal fun placementSlot(
+    slots: List<ComputerPart>,
+    workbench: LayoutCoordinates?,
+    mat: LayoutCoordinates?,
+    viewport: LayoutCoordinates?,
+    position: Offset,
+): ComputerPart? {
+    if (workbench == null || !workbench.isAttached || slots.isEmpty()) return null
+    if (ComputerPart.Chassis in slots) {
+        if (mat == null || !mat.isAttached) return null
+        val local = mat.localPositionOf(workbench, position)
+        return ComputerPart.Chassis.takeIf { local.x >= 0f && local.y >= 0f && local.x < mat.size.width && local.y < mat.size.height }
+    }
     if (viewport == null || !viewport.isAttached) return null
-    val local = viewport.windowToLocal(position)
+    val local = viewport.localPositionOf(workbench, position)
     val width = viewport.size.width.toFloat()
     val height = viewport.size.height.toFloat()
     if (width <= 0 || height <= 0 || local.x !in 0f..width || local.y !in 0f..height) return null
     val point = Offset(local.y * ArtworkWidth / height, WorkbenchTop + WorkbenchHeight * (1f - local.x / width))
     return slots.firstOrNull { placementArea(it).contains(point) }
+}
+
+private fun DrawScope.drawThermalPaste(center: Offset) {
+    val shadow = Color(0xFF727B83)
+    val paste = Color(0xFFE5E9EC)
+    val highlight = Color(0xFFF9FBFC)
+    drawRect(shadow, center + Offset(-45f, -26f), Size(90f, 54f))
+    drawRect(shadow, center + Offset(-32f, -39f), Size(64f, 80f))
+    drawRect(paste, center + Offset(-41f, -24f), Size(82f, 46f))
+    drawRect(paste, center + Offset(-28f, -34f), Size(55f, 68f))
+    drawRect(highlight, center + Offset(-26f, -25f), Size(42f, 19f))
+    drawRect(highlight, center + Offset(-30f, -6f), Size(22f, 10f))
 }
 
 @Composable

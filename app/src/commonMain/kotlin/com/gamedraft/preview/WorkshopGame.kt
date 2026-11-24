@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
@@ -17,8 +16,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,6 +85,7 @@ import com.gamedraft.preview.resources.screen_labels
 import com.gamedraft.preview.resources.workbench_clean
 import org.jetbrains.compose.resources.Font
 import org.jetbrains.compose.resources.imageResource
+import kotlin.math.abs
 
 internal val Background = Color(0xFF10171F)
 internal val Panel = Color(0xFF1C2832)
@@ -272,6 +270,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
     var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var workbench by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var mat by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val assembly = session.assembly
     val hasMachine = session.chassis != null
     val selection = ComputerPart.entries.firstOrNull { it.name == selectedName }
@@ -280,7 +279,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     val placementSlots = placementItem?.let { item ->
         item.type.compatibleSlots.filter { session.canInstall(item, it) }
     }.orEmpty()
-    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, viewport, it.position) }
+    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, workbench, mat, viewport, it.position) }
 
     fun selectPart(part: ComputerPart) {
         selectedItemId = null
@@ -325,11 +324,13 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
         selectedName = null
     }
 
-    fun moveInventoryPart(item: InventoryItem, position: Offset) {
+    fun moveInventoryPart(item: InventoryItem, source: LayoutCoordinates, position: Offset) {
         val active = draggedPart
         if (tabletOpen || paused || press != null || (active != null && active.item.id != item.id)) return
+        val bench = workbench?.takeIf { it.isAttached } ?: return
+        if (!source.isAttached) return
         if (active == null) selectItem(item)
-        draggedPart = InventoryDrag(item, position)
+        draggedPart = InventoryDrag(item, bench.localPositionOf(source, position))
     }
 
     fun finishInventoryDrag(item: InventoryItem, released: Boolean) {
@@ -337,7 +338,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
         draggedPart = null
         if (!released || tabletOpen || paused) return
         val available = item.type.compatibleSlots.filter { session.canInstall(item, it) }
-        val slot = placementSlot(available, viewport, active.position) ?: return
+        val slot = placementSlot(available, workbench, mat, viewport, active.position) ?: return
         session = session.install(item.id, slot)
         selectedItemId = null
         selectedName = slot.name.takeIf { slot.screws.isNotEmpty() }
@@ -371,12 +372,19 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
         },
     ) {
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxSize().onGloballyPositioned { mat = it }) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly, session.chassis, selection, placementSlots,
                     screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
                     { session = session.applyPasteToMountedCpu() }, hoveredSlot, { viewport = it }, ::selectPart, ::beginHold, ::endHold, ::performHold,
                     Modifier.fillMaxSize())
-
+                if (hasMachine) {
+                    GameButton("收纳机箱", {
+                        session = session.storeComputer()
+                        selectedName = null
+                        selectedItemId = null
+                    }, Modifier.align(Alignment.BottomStart).padding(8.dp),
+                        enabled = !paused && !tabletOpen && press == null && draggedPart == null)
+                }
             }
             WorkshopControlRail("开机检测", { monitorOpen = true }) {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -405,7 +413,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     artwork,
                     currentDrag.item.type,
                     currentDrag.item.part.product,
-                    workbench?.takeIf { it.isAttached }?.windowToLocal(currentDrag.position) ?: return@Canvas,
+                    currentDrag.position,
                     Size(95.dp.toPx(), 76.dp.toPx()),
                 )
             }
@@ -481,7 +489,7 @@ private fun Inventory(
     parts: List<InventoryItem>,
     selectedId: Int?,
     onSelect: (InventoryItem) -> Unit,
-    onMove: (InventoryItem, Offset) -> Unit,
+    onMove: (InventoryItem, LayoutCoordinates, Offset) -> Unit,
     onFinish: (InventoryItem, Boolean) -> Unit,
 ) {
     Column(
@@ -515,12 +523,13 @@ private fun InventorySlot(
     item: InventoryItem,
     active: Boolean,
     onSelect: (InventoryItem) -> Unit,
-    onMove: (InventoryItem, Offset) -> Unit,
+    onMove: (InventoryItem, LayoutCoordinates, Offset) -> Unit,
     onFinish: (InventoryItem, Boolean) -> Unit,
 ) {
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val currentMove by rememberUpdatedState(onMove)
     val currentFinish by rememberUpdatedState(onFinish)
+    val currentItem by rememberUpdatedState(item)
     Column(
         Modifier
             .fillMaxWidth()
@@ -530,28 +539,34 @@ private fun InventorySlot(
             .onGloballyPositioned { coordinates = it }
             .pointerInput(item.id) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    // Drag across the tray to place a part, or along it to scroll.
-                    val start = (if (down.type == PointerType.Mouse) {
-                        awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
-                    } else {
-                        awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
-                    }) ?: return@awaitEachGesture
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     val layout = coordinates?.takeIf { it.isAttached } ?: return@awaitEachGesture
-
+                    val itemAtPress = currentItem
+                    val mouse = down.type == PointerType.Mouse
+                    val slop = if (mouse) 3.dp.toPx() else viewConfiguration.touchSlop
+                    var dragging = false
                     var released = false
                     try {
-                        currentMove(item, layout.localToWindow(start.position))
-                        released = drag(start.id) { change ->
-                            if (layout.isAttached) currentMove(item, layout.localToWindow(change.position))
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.isConsumed || !layout.isAttached) break
+                            if (!dragging) {
+                                if (!change.pressed) break
+                                val delta = change.position - down.position
+                                if (!mouse && abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) break
+                                if (abs(delta.x) <= slop && (!mouse || abs(delta.y) <= slop)) continue
+                                dragging = true
+                            }
+                            currentMove(itemAtPress, layout, change.position)
                             change.consume()
-                        }
-                        val release = currentEvent.changes.firstOrNull { it.id == start.id }
-                        if (released && release != null && layout.isAttached) {
-                            currentMove(item, layout.localToWindow(release.position))
+                            if (!change.pressed) {
+                                released = true
+                                break
+                            }
                         }
                     } finally {
-                        currentFinish(item, released)
+                        if (dragging) currentFinish(itemAtPress, released)
                     }
                 }
             }
@@ -563,6 +578,9 @@ private fun InventorySlot(
         PartThumbnail(artwork, item.type, item.part.product, Modifier.size(width = 44.dp, height = 28.dp))
         Spacer(Modifier.height(2.dp))
         GameText(item.label, fontSize = 12)
+        item.storedComputer?.let { computer ->
+            GameText("已收纳 · ${computer.parts.size - 1} 件", fontSize = 11, color = Amber)
+        }
         if (item.part.hasPaste) GameText("已涂硅脂", fontSize = 11, color = Amber)
         GameText("耐久 ${item.part.durability}", fontSize = 11, color = if (item.part.working) MutedText else Amber)
     }

@@ -48,7 +48,12 @@ internal enum class Product(
 
 internal data class Purchase(val number: Int, val product: Product, val received: Boolean = false)
 
-internal data class InventoryItem(val id: Int, val type: ComputerPart, val part: HardwarePart) {
+internal data class InventoryItem(
+    val id: Int,
+    val type: ComputerPart,
+    val part: HardwarePart,
+    val storedComputer: StoredComputer? = null,
+) {
     val label: String get() = when (type) {
         ComputerPart.MemoryLeft, ComputerPart.MemoryRight -> "内存 ${part.specification.capacityGb}G"
         ComputerPart.HardDrive -> "硬盘 ${part.specification.capacityGb / 1000}TB"

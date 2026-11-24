@@ -32,6 +32,13 @@ internal enum class StartupStage(val durationMillis: Long) {
     Desktop(0),
 }
 
+internal data class StoredComputer(
+    val assembly: ComputerAssembly,
+    val parts: Map<ComputerPart, HardwarePart>,
+    val preferredDisk: ComputerPart,
+    val detachedPanel: HardwarePart? = null,
+)
+
 internal data class RepairSession(
     val assembly: ComputerAssembly = ComputerAssembly(),
     val preferredDisk: ComputerPart = ComputerPart.HardDrive,
@@ -59,16 +66,25 @@ internal data class RepairSession(
 
     fun remove(part: ComputerPart): RepairSession {
         if (!assembly.canRemove(part)) return this
+        if (part == ComputerPart.Chassis) return storeComputer()
         val instance = parts[part] ?: return this
-        val panel = if (part == ComputerPart.Chassis) inventory.firstOrNull {
-            it.type == ComputerPart.SidePanel && it.part.product == chassis
-        } else null
-        val loosePart = if (part == ComputerPart.Processor) instance.copy(hasPaste = false) else instance
+        val remaining = parts - part
+        val cpu = remaining[ComputerPart.Processor]
         return copy(
             assembly = assembly.remove(part),
-            parts = parts - part,
-            inventory = listOf(newItem(part, loosePart)) + inventory.filterNot { it.id == panel?.id },
+            parts = if (part == ComputerPart.Cooler && cpu != null) {
+                remaining + (ComputerPart.Processor to cpu.copy(hasPaste = false))
+            } else remaining,
+            inventory = listOf(newItem(part, instance)) + inventory,
         )
+    }
+
+    fun storeComputer(): RepairSession {
+        val case = parts[ComputerPart.Chassis] ?: return this
+        val panel = inventory.firstOrNull { it.type == ComputerPart.SidePanel && it.part.product == case.product }
+        val snapshot = StoredComputer(assembly, parts, preferredDisk, panel?.part)
+        val item = newItem(ComputerPart.Chassis, case).copy(storedComputer = snapshot)
+        return RepairSession(purchases = purchases, inventory = listOf(item) + inventory.filterNot { it.id == panel?.id })
     }
 
     fun canInstall(item: InventoryItem, slot: ComputerPart): Boolean =
@@ -79,6 +95,15 @@ internal data class RepairSession(
         val item = inventory.firstOrNull { it.id == itemId } ?: return this
         if (!canInstall(item, slot)) return this
         val remaining = inventory.filterNot { it.id == itemId }
+        item.storedComputer?.let { stored ->
+            val panel = stored.detachedPanel?.let { listOf(newItem(ComputerPart.SidePanel, it)) }.orEmpty()
+            return copy(
+                assembly = stored.assembly,
+                parts = stored.parts,
+                preferredDisk = stored.preferredDisk,
+                inventory = panel + remaining,
+            )
+        }
         val loosePanel = if (slot == ComputerPart.Chassis) listOf(newItem(ComputerPart.SidePanel, item.part)) else emptyList()
         return copy(
             assembly = assembly.install(slot),
@@ -145,11 +170,12 @@ internal data class RepairSession(
 
     fun save(): List<String> = buildList {
         add("FreeBuild")
-        add("Preferred=" + preferredDisk.name)
-        for ((slot, part) in parts) add("Mounted|${slot.name}|${part.encode()}")
-        for (item in inventory) add("Item|${item.id}|${item.type.name}|${item.part.encode()}")
+        addAll(StoredComputer(assembly, parts, preferredDisk).encode())
+        for (item in inventory) {
+            add("Item|${item.id}|${item.type.name}|${item.part.encode()}")
+            item.storedComputer?.encode()?.forEach { add("Stored|${item.id}|$it") }
+        }
         for (order in purchases) add("Purchase|${order.number}|${order.product.name}|${order.received}")
-        addAll(assembly.saveScrews())
     }
 
     companion object {
@@ -157,8 +183,7 @@ internal data class RepairSession(
             val freeBuild = entries.firstOrNull() == "FreeBuild"
             val purchases = mutableListOf<Purchase>()
             val inventory = mutableListOf<InventoryItem>()
-            val parts = mutableMapOf<ComputerPart, HardwarePart>()
-            val screws = mutableMapOf<ComputerPart, MutableSet<Int>>()
+            val stored = mutableMapOf<Int, MutableList<String>>()
             for (entry in entries) {
                 val fields = entry.split('|')
                 when (fields.first()) {
@@ -169,20 +194,46 @@ internal data class RepairSession(
                             inventory += InventoryItem(fields[1].toInt(), type, decodePart(fields, 3))
                         }
                     }
-                    "Mounted" -> if (freeBuild) parts[ComputerPart.valueOf(fields[1])] = decodePart(fields, 2)
-                    "Screw" -> if (freeBuild) {
-                        val slot = ComputerPart.valueOf(fields[1])
-                        screws.getOrPut(slot) { mutableSetOf() }.add(fields[2].toInt())
-                    }
+                    "Stored" -> if (freeBuild) stored.getOrPut(fields[1].toInt()) { mutableListOf() }
+                        .add(entry.substringAfter('|').substringAfter('|'))
                 }
             }
+            val active = decodeComputer(if (freeBuild) entries else emptyList())
             return RepairSession(
-                assembly = ComputerAssembly(parts.keys.toSet(), screws),
-                preferredDisk = ComputerPart.entries.firstOrNull { "Preferred=" + it.name in entries } ?: ComputerPart.HardDrive,
-                parts = parts, purchases = purchases, inventory = inventory,
+                assembly = active.assembly,
+                preferredDisk = active.preferredDisk,
+                parts = active.parts,
+                purchases = purchases,
+                inventory = inventory.map { item ->
+                    val snapshot = stored[item.id]?.let(::decodeComputer)
+                    item.copy(storedComputer = snapshot)
+                },
             )
         }
     }
+}
+
+private fun StoredComputer.encode(): List<String> = buildList {
+    add("Preferred=" + preferredDisk.name)
+    for ((slot, part) in parts) add("Mounted|${slot.name}|${part.encode()}")
+    addAll(assembly.saveScrews())
+    detachedPanel?.let { add("Panel|${it.encode()}") }
+}
+
+private fun decodeComputer(entries: List<String>): StoredComputer {
+    val parts = mutableMapOf<ComputerPart, HardwarePart>()
+    val screws = mutableMapOf<ComputerPart, MutableSet<Int>>()
+    var detachedPanel: HardwarePart? = null
+    for (entry in entries) {
+        val fields = entry.split('|')
+        when (fields.first()) {
+            "Mounted" -> parts[ComputerPart.valueOf(fields[1])] = decodePart(fields, 2)
+            "Screw" -> screws.getOrPut(ComputerPart.valueOf(fields[1])) { mutableSetOf() }.add(fields[2].toInt())
+            "Panel" -> detachedPanel = decodePart(fields, 1)
+        }
+    }
+    val preferred = ComputerPart.entries.firstOrNull { "Preferred=" + it.name in entries } ?: ComputerPart.HardDrive
+    return StoredComputer(ComputerAssembly(parts.keys.toSet(), screws), parts, preferred, detachedPanel)
 }
 
 private fun HardwarePart.encode(): String = with(specification) {
