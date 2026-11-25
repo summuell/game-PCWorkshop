@@ -62,7 +62,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
-import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -111,6 +110,7 @@ internal class WorkbenchPress(val target: WorkbenchHold, val point: Offset, val 
     fun complete() { completed = true }
 }
 
+private data class InventoryContact(val item: InventoryItem, val id: PointerId, val start: Offset)
 private data class InventoryDrag(val item: InventoryItem, val position: Offset)
 private val ToolSlotSize = 56.dp
 private val ToolGap = 8.dp
@@ -168,7 +168,8 @@ internal fun WorkshopGame(
                                 WorkshopTablet(sessionState.value, tabletPage, { tabletPage = it },
                                     onClose = { tabletOpen = false },
                                     onBuy = { sessionState.value = sessionState.value.buy(it) },
-                                    onReceive = { sessionState.value = sessionState.value.receive(it) })
+                                    onDeposit = { sessionState.value = sessionState.value.deposit(it) },
+                                    onWithdraw = { sessionState.value = sessionState.value.withdraw(it) })
                             }
                         }
                         FloatingMenuButton { menuOpen = true }
@@ -268,18 +269,18 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     val contactPoints = remember { mutableMapOf<PointerId, Offset>() }
     LaunchedEffect(monitorOpen, tabletOpen, paused) { press = null }
     var draggedPart by remember { mutableStateOf<InventoryDrag?>(null) }
-    var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var inventoryContact by remember { mutableStateOf<InventoryContact?>(null) }
     var workbench by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var mat by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val assembly = session.assembly
     val hasMachine = session.chassis != null
     val selection = ComputerPart.entries.firstOrNull { it.name == selectedName }
     val currentDrag = draggedPart
-    val placementItem = session.inventory.firstOrNull { it.id == selectedItemId }
+    val placementItem = currentDrag?.item ?: session.inventory.firstOrNull { it.id == selectedItemId }
     val placementSlots = placementItem?.let { item ->
         item.type.compatibleSlots.filter { session.canInstall(item, it) }
     }.orEmpty()
-    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, workbench, mat, viewport, it.position) }
+    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, workbench, mat, it.position) }
 
     fun selectPart(part: ComputerPart) {
         selectedItemId = null
@@ -324,21 +325,16 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
         selectedName = null
     }
 
-    fun moveInventoryPart(item: InventoryItem, source: LayoutCoordinates, position: Offset) {
-        val active = draggedPart
-        if (tabletOpen || paused || press != null || (active != null && active.item.id != item.id)) return
-        val bench = workbench?.takeIf { it.isAttached } ?: return
-        if (!source.isAttached) return
-        if (active == null) selectItem(item)
-        draggedPart = InventoryDrag(item, bench.localPositionOf(source, position))
+    fun armInventoryDrag(item: InventoryItem, id: PointerId) {
+        val start = contactPoints[id] ?: return
+        if (!paused && !tabletOpen && press == null && inventoryContact == null) {
+            inventoryContact = InventoryContact(item, id, start)
+        }
     }
 
-    fun finishInventoryDrag(item: InventoryItem, released: Boolean) {
-        val active = draggedPart?.takeIf { it.item.id == item.id } ?: return
-        draggedPart = null
-        if (!released || tabletOpen || paused) return
+    fun dropItem(item: InventoryItem, point: Offset) {
         val available = item.type.compatibleSlots.filter { session.canInstall(item, it) }
-        val slot = placementSlot(available, workbench, mat, viewport, active.position) ?: return
+        val slot = placementSlot(available, workbench, mat, point) ?: return
         session = session.install(item.id, slot)
         selectedItemId = null
         selectedName = slot.name.takeIf { slot.screws.isNotEmpty() }
@@ -350,7 +346,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     Box(
-        Modifier.fillMaxSize().onGloballyPositioned { workbench = it }.pointerInput(Unit) {
+        Modifier.fillMaxSize().onGloballyPositioned { workbench = it }.pointerInput(paused, tabletOpen) {
             // Observe before tiny screw zones consume the press. These coordinates are shared with the overlay.
             try {
                 awaitPointerEventScope {
@@ -358,7 +354,31 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                         for (change in awaitPointerEvent(PointerEventPass.Initial).changes) {
                             if (change.pressed && !change.previousPressed) {
                                 contactPoints[change.id] = change.position
-                            } else if (!change.pressed) {
+                            }
+                            val contact = inventoryContact
+                            if (contact != null && change.id == contact.id) {
+                                val delta = change.position - contact.start
+                                if (draggedPart == null && change.pressed) {
+                                    val horizontal = abs(delta.x)
+                                    val vertical = abs(delta.y)
+                                    if (horizontal >= 2.dp.toPx() && horizontal >= vertical * 0.7f) {
+                                        selectItem(contact.item)
+                                        draggedPart = InventoryDrag(contact.item, change.position)
+                                    } else if (vertical >= viewConfiguration.touchSlop) {
+                                        inventoryContact = null
+                                    }
+                                }
+                                if (draggedPart != null) {
+                                    if (change.pressed) draggedPart = InventoryDrag(contact.item, change.position)
+                                    else if (!change.isConsumed) dropItem(contact.item, change.position)
+                                    change.consume()
+                                }
+                                if (!change.pressed) {
+                                    draggedPart = null
+                                    inventoryContact = null
+                                }
+                            }
+                            if (!change.pressed) {
                                 contactPoints.remove(change.id)
                                 if (press?.pointerId == change.id) press = null
                             }
@@ -366,6 +386,8 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     }
                 }
             } finally {
+                inventoryContact = null
+                draggedPart = null
                 contactPoints.clear()
                 press = null
             }
@@ -375,7 +397,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
             Box(Modifier.weight(1f).fillMaxSize().onGloballyPositioned { mat = it }) {
                 if (artwork.ready) WorkbenchScene(artwork, assembly, session.chassis, selection, placementSlots,
                     screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
-                    { session = session.applyPasteToMountedCpu() }, hoveredSlot, { viewport = it }, ::selectPart, ::beginHold, ::endHold, ::performHold,
+                    { session = session.applyPasteToMountedCpu() }, hoveredSlot, ::selectPart, ::beginHold, ::endHold, ::performHold,
                     Modifier.fillMaxSize())
                 if (hasMachine) {
                     GameButton("收纳机箱", {
@@ -401,7 +423,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
                     { item ->
                         selectItem(item)
                         if (tool == BenchTool.Paste) session = session.applyPasteToItem(item.id)
-                    }, ::moveInventoryPart, ::finishInventoryDrag)
+                    }, ::armInventoryDrag)
             }
         }
         press?.let { gesture ->
@@ -489,8 +511,7 @@ private fun Inventory(
     parts: List<InventoryItem>,
     selectedId: Int?,
     onSelect: (InventoryItem) -> Unit,
-    onMove: (InventoryItem, LayoutCoordinates, Offset) -> Unit,
-    onFinish: (InventoryItem, Boolean) -> Unit,
+    onPressItem: (InventoryItem, PointerId) -> Unit,
 ) {
     Column(
         Modifier.fillMaxWidth(),
@@ -511,7 +532,7 @@ private fun Inventory(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             items(parts, key = { it.id }) { item ->
-                InventorySlot(artwork, item, item.id == selectedId, onSelect, onMove, onFinish)
+                InventorySlot(artwork, item, item.id == selectedId, onSelect, onPressItem)
             }
         }
     }
@@ -523,51 +544,19 @@ private fun InventorySlot(
     item: InventoryItem,
     active: Boolean,
     onSelect: (InventoryItem) -> Unit,
-    onMove: (InventoryItem, LayoutCoordinates, Offset) -> Unit,
-    onFinish: (InventoryItem, Boolean) -> Unit,
+    onPressItem: (InventoryItem, PointerId) -> Unit,
 ) {
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val currentMove by rememberUpdatedState(onMove)
-    val currentFinish by rememberUpdatedState(onFinish)
-    val currentItem by rememberUpdatedState(item)
+    val pressItem by rememberUpdatedState(onPressItem)
     Column(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 76.dp)
             .background(if (active) Color(0xFF302820) else SlotBackground)
             .border(if (active) 2.dp else 1.dp, if (active) Amber else Border)
-            .onGloballyPositioned { coordinates = it }
-            .pointerInput(item.id) {
+            .pointerInput(item) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    val layout = coordinates?.takeIf { it.isAttached } ?: return@awaitEachGesture
-                    val itemAtPress = currentItem
-                    val mouse = down.type == PointerType.Mouse
-                    val slop = if (mouse) 3.dp.toPx() else viewConfiguration.touchSlop
-                    var dragging = false
-                    var released = false
-                    try {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.isConsumed || !layout.isAttached) break
-                            if (!dragging) {
-                                if (!change.pressed) break
-                                val delta = change.position - down.position
-                                if (!mouse && abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) break
-                                if (abs(delta.x) <= slop && (!mouse || abs(delta.y) <= slop)) continue
-                                dragging = true
-                            }
-                            currentMove(itemAtPress, layout, change.position)
-                            change.consume()
-                            if (!change.pressed) {
-                                released = true
-                                break
-                            }
-                        }
-                    } finally {
-                        if (dragging) currentFinish(itemAtPress, released)
-                    }
+                    pressItem(item, down.id)
                 }
             }
             .clickable(role = Role.Button) { onSelect(item) }

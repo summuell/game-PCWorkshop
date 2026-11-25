@@ -24,7 +24,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
-internal enum class TabletPage { Shop, Purchases }
+internal enum class TabletPage { Shop, Warehouse }
 
 @Composable
 internal fun WorkshopTablet(
@@ -33,7 +33,8 @@ internal fun WorkshopTablet(
     onPageChanged: (TabletPage) -> Unit,
     onClose: () -> Unit,
     onBuy: (Product) -> Unit,
-    onReceive: (Int) -> Unit,
+    onDeposit: (Int) -> Unit,
+    onWithdraw: (Int) -> Unit,
 ) {
     var category by rememberSaveable { mutableStateOf(ShopCategory.Cases) }
     Column(
@@ -50,49 +51,60 @@ internal fun WorkshopTablet(
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GameButton("商城", { onPageChanged(TabletPage.Shop) }, Modifier.weight(1f), primary = page == TabletPage.Shop)
-            val pending = session.purchases.count { !it.received }
-            GameButton(if (pending > 0) "购物订单 ($pending)" else "购物订单", { onPageChanged(TabletPage.Purchases) },
-                Modifier.weight(1.3f), primary = page == TabletPage.Purchases)
+            GameButton("仓库", { onPageChanged(TabletPage.Warehouse) },
+                Modifier.weight(1f), primary = page == TabletPage.Warehouse)
         }
-        val scroll = key(page, if (page == TabletPage.Shop) category else null) { rememberScrollState() }
+        if (page == TabletPage.Warehouse) {
+            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StorageList("物品栏", session.inventory, "存入", onDeposit, Modifier.weight(1f))
+                StorageList("仓库", session.warehouse, "取出", onWithdraw, Modifier.weight(1f))
+            }
+            return
+        }
+        val scroll = key(category) { rememberScrollState() }
         Column(
             Modifier.weight(1f).fillMaxWidth().background(SlotBackground)
                 .border(1.dp, Border).verticalScroll(scroll).padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            when (page) {
-                TabletPage.Shop -> {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        for (section in ShopCategory.entries) {
-                            GameButton(section.label, { category = section }, primary = section == category)
-                        }
-                    }
-                    if (category == ShopCategory.Tools) GameText("暂无维修或检测工具", color = MutedText)
-                    for (product in Product.entries.filter { it.category == category }) {
-                        Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            if (product.caseStyle != null) CaseShopThumbnail(product, Modifier.size(92.dp, 58.dp))
-                            Column(Modifier.weight(1f)) {
-                                GameText(product.shopName)
-                                GameText(product.detail, fontSize = 13, color = MutedText)
-                            }
-                            GameText("¥0", fontSize = 14, color = Amber)
-                            GameButton("购买", { onBuy(product) })
-                        }
-                    }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                for (section in ShopCategory.entries) {
+                    GameButton(section.label, { category = section }, primary = section == category)
                 }
-                TabletPage.Purchases -> {
-                    if (session.purchases.isEmpty()) GameText("暂无购物订单", color = MutedText)
-                    for (order in session.purchases.asReversed()) {
-                        Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                GameText(order.product.shopName)
-                                GameText("订单 #${order.number} · " + if (order.received) "已签收" else "已到货",
-                                    fontSize = 13, color = MutedText)
-                            }
-                            if (!order.received) GameButton("签收", { onReceive(order.number) }, primary = true)
-                        }
+            }
+            if (category == ShopCategory.Tools) GameText("暂无维修或检测工具", color = MutedText)
+            for (product in Product.entries.filter { it.category == category }) {
+                Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (product.caseStyle != null) CaseShopThumbnail(product, Modifier.size(92.dp, 58.dp))
+                    Column(Modifier.weight(1f)) {
+                        GameText(product.shopName)
+                        GameText(product.detail, fontSize = 13, color = MutedText)
                     }
+                    GameText("¥0", fontSize = 14, color = Amber)
+                    GameButton("购买", { onBuy(product) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StorageList(title: String, items: List<InventoryItem>, action: String, transfer: (Int) -> Unit, modifier: Modifier) {
+    Column(modifier.background(SlotBackground).border(1.dp, Border).padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        GameText("$title · ${items.size}", fontSize = 15)
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (item in items) key(item.id) {
+                Row(Modifier.fillMaxWidth().background(Panel).padding(6.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        GameText(if (item.type == ComputerPart.SidePanel) item.label else item.part.product?.shopName ?: item.label, fontSize = 14)
+                        val build = item.storedComputer
+                        GameText(if (build == null) "耐久 ${item.part.durability}" else "已收纳 · ${build.parts.size - 1} 件",
+                            fontSize = 12, color = MutedText)
+                    }
+                    GameButton(action, { transfer(item.id) })
                 }
             }
         }

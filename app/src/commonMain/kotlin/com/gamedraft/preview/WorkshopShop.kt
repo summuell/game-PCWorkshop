@@ -46,8 +46,6 @@ internal enum class Product(
     fun newPart() = HardwarePart(spec, product = this)
 }
 
-internal data class Purchase(val number: Int, val product: Product, val received: Boolean = false)
-
 internal data class InventoryItem(
     val id: Int,
     val type: ComputerPart,

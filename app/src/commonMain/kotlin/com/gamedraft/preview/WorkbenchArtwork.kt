@@ -185,7 +185,6 @@ internal fun WorkbenchScene(
     cpuHasPaste: Boolean,
     onPaste: () -> Unit,
     hoveredSlot: ComputerPart?,
-    onViewportChanged: (LayoutCoordinates) -> Unit,
     onSelect: (ComputerPart) -> Unit,
     onBeginHold: (WorkbenchHold, PointerId) -> WorkbenchPress?,
     onEndHold: (WorkbenchPress, Boolean) -> Unit,
@@ -223,7 +222,7 @@ internal fun WorkbenchScene(
             )
 
         Box(
-            Modifier.size(sceneWidth, sceneHeight).clipToBounds().onGloballyPositioned(onViewportChanged),
+            Modifier.size(sceneWidth, sceneHeight).clipToBounds(),
         ) {
             Canvas(Modifier.matchParentSize()) {
                 val scale = size.height / ArtworkWidth
@@ -333,22 +332,22 @@ internal fun placementSlot(
     slots: List<ComputerPart>,
     workbench: LayoutCoordinates?,
     mat: LayoutCoordinates?,
-    viewport: LayoutCoordinates?,
     position: Offset,
 ): ComputerPart? {
-    if (workbench == null || !workbench.isAttached || slots.isEmpty()) return null
-    if (ComputerPart.Chassis in slots) {
-        if (mat == null || !mat.isAttached) return null
-        val local = mat.localPositionOf(workbench, position)
-        return ComputerPart.Chassis.takeIf { local.x >= 0f && local.y >= 0f && local.x < mat.size.width && local.y < mat.size.height }
-    }
-    if (viewport == null || !viewport.isAttached) return null
-    val local = viewport.localPositionOf(workbench, position)
-    val width = viewport.size.width.toFloat()
-    val height = viewport.size.height.toFloat()
-    if (width <= 0 || height <= 0 || local.x !in 0f..width || local.y !in 0f..height) return null
-    val point = Offset(local.y * ArtworkWidth / height, WorkbenchTop + WorkbenchHeight * (1f - local.x / width))
-    return slots.firstOrNull { placementArea(it).contains(point) }
+    if (workbench == null || !workbench.isAttached || mat == null || !mat.isAttached || slots.isEmpty()) return null
+    val point = mat.localPositionOf(workbench, position)
+    val width = mat.size.width.toFloat()
+    val height = mat.size.height.toFloat()
+    if (point.x < 0f || point.x >= width || point.y < 0f || point.y >= height) return null
+    if (ComputerPart.Chassis in slots) return ComputerPart.Chassis
+    val scale = minOf(width / WorkbenchHeight, height / ArtworkWidth)
+    val left = (width - WorkbenchHeight * scale) / 2f
+    val top = (height - ArtworkWidth * scale) / 2f
+    val artPoint = Offset((point.y - top) / scale, WorkbenchTop + WorkbenchHeight - (point.x - left) / scale)
+    slots.firstOrNull { placementArea(it).contains(artPoint) }?.let { return it }
+    // Give narrow sockets a touch margin. Between two RAM slots, snap to the nearer one.
+    return slots.filter { placementArea(it).inflate(24f).contains(artPoint) }
+        .minByOrNull { (placementArea(it).center - artPoint).getDistanceSquared() }
 }
 
 private fun DrawScope.drawThermalPaste(center: Offset) {

@@ -43,25 +43,27 @@ internal data class RepairSession(
     val assembly: ComputerAssembly = ComputerAssembly(),
     val preferredDisk: ComputerPart = ComputerPart.HardDrive,
     val parts: Map<ComputerPart, HardwarePart> = emptyMap(),
-    val purchases: List<Purchase> = emptyList(),
+    val warehouse: List<InventoryItem> = emptyList(),
     val inventory: List<InventoryItem> = emptyList(),
 ) {
     val chassis: Product? get() = parts[ComputerPart.Chassis]?.product
 
-    fun buy(product: Product): RepairSession {
-        val number = (purchases.lastOrNull()?.number ?: 0) + 1
-        return copy(purchases = purchases + Purchase(number, product))
+    fun buy(product: Product): RepairSession =
+        copy(inventory = listOf(newItem(product.slot, product.newPart())) + inventory)
+
+    private fun newItem(type: ComputerPart, part: HardwarePart): InventoryItem {
+        val largest = maxOf(inventory.maxOfOrNull { it.id } ?: 0, warehouse.maxOfOrNull { it.id } ?: 0)
+        return InventoryItem(largest + 1, type, part)
     }
 
-    private fun newItem(type: ComputerPart, part: HardwarePart) =
-        InventoryItem((inventory.maxOfOrNull { it.id } ?: 0) + 1, type, part)
+    fun deposit(id: Int): RepairSession {
+        val item = inventory.firstOrNull { it.id == id } ?: return this
+        return copy(inventory = inventory - item, warehouse = listOf(item) + warehouse)
+    }
 
-    fun receive(number: Int): RepairSession {
-        val order = purchases.firstOrNull { it.number == number && !it.received } ?: return this
-        return copy(
-            purchases = purchases.map { if (it.number == number) it.copy(received = true) else it },
-            inventory = listOf(newItem(order.product.slot, order.product.newPart())) + inventory,
-        )
+    fun withdraw(id: Int): RepairSession {
+        val item = warehouse.firstOrNull { it.id == id } ?: return this
+        return copy(inventory = listOf(item) + inventory, warehouse = warehouse - item)
     }
 
     fun remove(part: ComputerPart): RepairSession {
@@ -81,10 +83,12 @@ internal data class RepairSession(
 
     fun storeComputer(): RepairSession {
         val case = parts[ComputerPart.Chassis] ?: return this
-        val panel = inventory.firstOrNull { it.type == ComputerPart.SidePanel && it.part.product == case.product }
+        val panel = if (assembly.isInstalled(ComputerPart.SidePanel)) null else inventory.firstOrNull {
+            it.type == ComputerPart.SidePanel && it.part.product == case.product
+        }
         val snapshot = StoredComputer(assembly, parts, preferredDisk, panel?.part)
         val item = newItem(ComputerPart.Chassis, case).copy(storedComputer = snapshot)
-        return RepairSession(purchases = purchases, inventory = listOf(item) + inventory.filterNot { it.id == panel?.id })
+        return RepairSession(warehouse = warehouse, inventory = listOf(item) + inventory.filterNot { it.id == panel?.id })
     }
 
     fun canInstall(item: InventoryItem, slot: ComputerPart): Boolean =
@@ -171,27 +175,30 @@ internal data class RepairSession(
     fun save(): List<String> = buildList {
         add("FreeBuild")
         addAll(StoredComputer(assembly, parts, preferredDisk).encode())
-        for (item in inventory) {
-            add("Item|${item.id}|${item.type.name}|${item.part.encode()}")
-            item.storedComputer?.encode()?.forEach { add("Stored|${item.id}|$it") }
+        for ((location, items) in listOf("Item" to inventory, "Warehouse" to warehouse)) {
+            for (item in items) {
+                add("$location|${item.id}|${item.type.name}|${item.part.encode()}")
+                item.storedComputer?.encode()?.forEach { add("Stored|${item.id}|$it") }
+            }
         }
-        for (order in purchases) add("Purchase|${order.number}|${order.product.name}|${order.received}")
     }
 
     companion object {
         fun restore(entries: List<String>): RepairSession {
             val freeBuild = entries.firstOrNull() == "FreeBuild"
-            val purchases = mutableListOf<Purchase>()
+            val pending = mutableListOf<Product>()
+            val warehouse = mutableListOf<InventoryItem>()
             val inventory = mutableListOf<InventoryItem>()
             val stored = mutableMapOf<Int, MutableList<String>>()
             for (entry in entries) {
                 val fields = entry.split('|')
                 when (fields.first()) {
-                    "Purchase" -> purchases += Purchase(fields[1].toInt(), Product.valueOf(fields[2]), fields[3].toBoolean())
-                    "Item" -> {
+                    "Purchase" -> if (!fields[3].toBoolean()) pending += Product.valueOf(fields[2])
+                    "Item", "Warehouse" -> {
                         val type = ComputerPart.entries.firstOrNull { it.name == fields[2] } ?: continue
                         if (freeBuild || type != ComputerPart.SidePanel) {
-                            inventory += InventoryItem(fields[1].toInt(), type, decodePart(fields, 3))
+                            val destination = if (fields.first() == "Item") inventory else warehouse
+                            destination += InventoryItem(fields[1].toInt(), type, decodePart(fields, 3))
                         }
                     }
                     "Stored" -> if (freeBuild) stored.getOrPut(fields[1].toInt()) { mutableListOf() }
@@ -199,16 +206,15 @@ internal data class RepairSession(
                 }
             }
             val active = decodeComputer(if (freeBuild) entries else emptyList())
-            return RepairSession(
+            fun restoreItem(item: InventoryItem) = item.copy(storedComputer = stored[item.id]?.let(::decodeComputer))
+            val session = RepairSession(
                 assembly = active.assembly,
                 preferredDisk = active.preferredDisk,
                 parts = active.parts,
-                purchases = purchases,
-                inventory = inventory.map { item ->
-                    val snapshot = stored[item.id]?.let(::decodeComputer)
-                    item.copy(storedComputer = snapshot)
-                },
+                inventory = inventory.map(::restoreItem),
+                warehouse = warehouse.map(::restoreItem),
             )
+            return pending.fold(session) { current, product -> current.buy(product) }
         }
     }
 }
