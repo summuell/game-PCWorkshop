@@ -397,7 +397,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     ) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize().onGloballyPositioned { mat = it }) {
-                if (artwork.ready) WorkbenchScene(artwork, assembly, session.chassis, BoardGeometry[session.boardLayout], selection, placementSlots,
+                if (artwork.ready) WorkbenchScene(artwork, assembly, session.parts, BoardGeometry[session.boardLayout], selection, placementSlots,
                     screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
                     { session = session.applyPasteToMountedCpu() }, hoveredSlot, ::selectPart, ::beginHold, ::endHold, ::performHold,
                     Modifier.fillMaxSize())

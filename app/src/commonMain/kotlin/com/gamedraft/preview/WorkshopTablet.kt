@@ -37,6 +37,7 @@ internal fun WorkshopTablet(
     onWithdraw: (Int) -> Unit,
 ) {
     var category by rememberSaveable { mutableStateOf(ShopCategory.Cases) }
+    val artwork = loadWorkbenchArtwork()
     Column(
         Modifier.fillMaxSize().padding(12.dp).background(Panel).border(2.dp, Border).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -47,7 +48,10 @@ internal fun WorkshopTablet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GameText("平板电脑", fontSize = 22, modifier = Modifier.semantics { heading() })
-            GameButton("返回", onClose)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                GameText("余额 ${yuan(session.balance)}", color = Amber)
+                GameButton("返回", onClose)
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GameButton("商城", { onPageChanged(TabletPage.Shop) }, Modifier.weight(1f), primary = page == TabletPage.Shop)
@@ -74,16 +78,20 @@ internal fun WorkshopTablet(
             }
             if (category == ShopCategory.Tools) GameText("暂无维修或检测工具", color = MutedText)
             for (product in Product.entries.filter { it.category == category }) {
+                val affordable = session.balance >= product.price
                 Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     product.board?.let { BoardThumbnail(it, Modifier.size(92.dp, 58.dp)) }
                     if (product.caseStyle != null) CaseShopThumbnail(product, Modifier.size(92.dp, 58.dp))
+                    if (product.hasComponentArtwork) {
+                        PartThumbnail(artwork, product.slot, product, Modifier.size(92.dp, 50.dp))
+                    }
                     Column(Modifier.weight(1f)) {
                         GameText(product.shopName)
                         GameText(product.detail, fontSize = 13, color = MutedText)
                     }
-                    GameText("¥0", fontSize = 14, color = Amber)
-                    GameButton("购买", { onBuy(product) })
+                    GameText(yuan(product.price), fontSize = 14, color = Amber)
+                    GameButton(if (affordable) "购买" else "余额不足", { onBuy(product) }, enabled = affordable)
                 }
             }
         }

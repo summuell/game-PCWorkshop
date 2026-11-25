@@ -60,11 +60,22 @@
 ## 平板与商城
 
 - 右上角的平板入口在「开机检测」或「工作台」右侧，主界面、工作台、检测及菜单均可打开。当前自由装机版提供商城和仓库。
-- 商城包含机箱、主板、CPU、散热、内存、显卡、电源、硬盘、线材和工具分类。商城商品使用「类别-厂商-系列或接口-型号及规格」命名。现阶段配件免费，工具分类暂空。购买后直接进入物品栏。在仓库页面可逐件存入或取出，收纳整机、配件耐久、硅脂和系统状态随物品转移。旧存档中待签收的配件在读档时自动进入物品栏。
+- 商城包含机箱、主板、CPU、散热、内存、显卡、电源、硬盘、线材和工具分类。商城商品使用「类别-厂商-系列或接口-型号及规格」命名。商品标注游戏内测试价。新开局有 ¥50,000，足够买下各型号一件并搭配多套整机。购买从余额扣款后直接入物品栏，余额不足时购买按钮置灰。工具分类暂空。余额随存档保存，早期无余额字段的存档读入时获得测试资金。在仓库页面可逐件存入或取出，收纳整机、配件耐久、硅脂和系统状态随物品转移。旧存档中待签收的配件在读档时自动进入物品栏。
 - 空工作台也显示「开机检测」入口。无机箱时，电源、重启和插入 U 盘按钮置灰。放置机箱后可手动尝试开机，主机依照已安装硬件显示启动过程和对应故障现象。
 
 - 显示器页面右上角的「工作台」和工作台页面的「开机检测」共用同一按钮位置。显示器页面的电源键控制开关机，通电时发光。重启键重新开始启动过程。启动现象显示在屏幕内，工作台省略螺丝数量提示。
 - 工具栏第二格是硅脂。拆下 CPU 散热器时，CPU 上的硅脂失效。选中硅脂后可点物品栏内的 CPU 或露出的 CPU 重涂，台面上的 CPU 会显示明亮的硅脂斑。散热器缺失或损坏时通电 5 秒后关机，散热器完好但 CPU 缺硅脂时通电 10 秒后关机。
+
+## 硬盘、内存、显卡与电源
+
+- 每类新增五款并保留原有商品。容量、显存、接口和额定规格参考具体型号，商品价格用于游戏内测试。
+- 硬盘覆盖 SATA 机械盘、2.5 英寸 SATA SSD 和 M.2 NVMe。M.2 装入主板插槽，SATA 盘装在机箱硬盘位并接线。仓库、配置检测和系统安装读取实际装入的型号和容量。
+- 内存按单条 DDR4 DIMM 销售。混插合计容量，检测速率取已装内存中最低的标称值，按 i5-11400F 的 3200 MT/s 上限计算。
+- GT 1030 由插槽供电，其余当前显卡使用 8 针供电线。用已通电显卡的标称功耗和其余部件的估算功耗判断电源是否足够。装机位置与线材以游戏中的共用规格模拟。
+- 硬盘规格参考 [金士顿 NV2](https://www.kingston.com/datasheets/snv2s_en.pdf)、[金士顿 KC3000](https://www.kingston.com/en/ssd/kc3000-nvme-m2-solid-state-drive)、[三星 990 PRO](https://download.semiconductor.samsung.com/resources/data-sheet/Samsung_NVMe_SSD_990_PRO_Datasheet_Rev.1.0_10129514049640.pdf)、[WD Blue SA510](https://documents.sandisk.com/content/dam/asset-library/en_us/assets/public/sandisk/product/internal-drives/wd-blue-ssd/data-sheet-wd-blue-sa510-sata-ssd.pdf)、[WD Blue HDD](https://www.westerndigital.com/products/internal-drives/wd-blue-desktop-sata-hdd)、[希捷酷鱼](https://www.seagate.com/products/hard-drives/barracuda-hard-drive/?sku=ST1000DM010) 和 [希捷酷狼](https://www.seagate.com/files/www-content/product-content/ironwolf/en-us/docs/100807039r.pdf)。
+- 内存规格参考 [英睿达 DDR4](https://www.crucial.com/memory/ddr4/ct4g4dfs8266)、[金士顿 ValueRAM](https://www.kingston.com/datasheets/KVR26N19S8_8.pdf)、[FURY Beast DDR4](https://www.kingston.com/en/memory/gaming/kingston-fury-beast-ddr4-memory) 和 [i5-11400F 的内存支持](https://www.intel.com/content/www/us/en/products/sku/212271/intel-core-i511400f-processor-12m-cache-up-to-4-40-ghz/specifications.html)。
+- 显卡规格参考 [微星 GT 1030](https://www.msi.com/Graphics-Card/GeForce-GT-1030-2G-LP-OC/Specification)、[七彩虹 GTX 1660 SUPER](https://www.colorful.cn/home/product?id=1719&mid=102)、[蓝宝石 PULSE RX 6600](https://www.sapphiretech.com/en/consumer/pulse-radeon-rx-6600-8g-gddr6)、[微星 RTX 3060](https://www.msi.com/Graphics-Card/GeForce-RTX-3060-VENTUS-2X-12G-OC/Specification)、[RTX 4060](https://www.msi.com/Graphics-Card/GeForce-RTX-4060-VENTUS-2X-BLACK-8G-OC/Specification) 和 [RTX 4070](https://www.msi.com/Graphics-Card/GeForce-RTX-4070-VENTUS-2X-12G-OC/Specification)。
+- 电源规格参考 [海盗船 CX450](https://www.corsair.com/ww/en/p/psu/cp-9020120-ww/cx-series-cx450-450-watt-80-plus-bronze-certified-atx-psu-ww-cp-9020120-ww)、[CX650](https://www.corsair.com/ww/en/p/psu/cp-9020278-na/cx-series-cx650-650-watt-80-plus-bronze-atx-power-supply-cp-9020278-na)、[RM750x](https://www.corsair.com/ww/en/p/psu/cp-9020199-eu/rmx-series-rm750x-750-watt-80-plus-gold-fully-modular-atx-psu-cp-9020199-eu)、[RM850x](https://www.corsair.com/us/en/p/psu/cp-9020200-na/rmx-series-rm850x-850-watt-80-plus-gold-fully-modular-atx-psu-cp-9020200-na) 和 [海韵 FOCUS GX](https://seasonic.com/power-supplies/filter/product_cat-focus-series/)。
 
 ## 桌面与安装介质
 

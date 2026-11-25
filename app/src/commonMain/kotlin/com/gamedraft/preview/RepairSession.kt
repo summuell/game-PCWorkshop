@@ -45,11 +45,17 @@ internal data class RepairSession(
     val parts: Map<ComputerPart, HardwarePart> = emptyMap(),
     val warehouse: List<InventoryItem> = emptyList(),
     val inventory: List<InventoryItem> = emptyList(),
+    val balance: Int = StartingBalance,
 ) {
     val boardLayout: BoardLayout get() = parts[ComputerPart.Motherboard]?.product?.board ?: BoardLayout.PrimeB560
     val chassis: Product? get() = parts[ComputerPart.Chassis]?.product
 
-    fun buy(product: Product): RepairSession =
+    fun buy(product: Product): RepairSession {
+        if (balance < product.price) return this
+        return receive(product).copy(balance = balance - product.price)
+    }
+
+    private fun receive(product: Product): RepairSession =
         copy(inventory = listOf(newItem(product.slot, product.newPart())) + inventory)
 
     private fun newItem(type: ComputerPart, part: HardwarePart): InventoryItem {
@@ -89,12 +95,17 @@ internal data class RepairSession(
         }
         val snapshot = StoredComputer(assembly, parts, preferredDisk, panel?.part)
         val item = newItem(ComputerPart.Chassis, case).copy(storedComputer = snapshot)
-        return RepairSession(warehouse = warehouse, inventory = listOf(item) + inventory.filterNot { it.id == panel?.id })
+        return RepairSession(
+            warehouse = warehouse,
+            inventory = listOf(item) + inventory.filterNot { it.id == panel?.id },
+            balance = balance,
+        )
     }
 
     fun canInstall(item: InventoryItem, slot: ComputerPart): Boolean =
         slot in item.type.compatibleSlots && boardLayout.supports(slot) && assembly.canInstall(slot) &&
-            (slot != ComputerPart.SidePanel || item.part.product == chassis)
+            (slot != ComputerPart.SidePanel || item.part.product == chassis) &&
+            (slot !in ComputerPart.graphicsLeads || needsGraphicsLead(ComputerPart.graphicsLeads.indexOf(slot)))
 
     fun install(itemId: Int, slot: ComputerPart): RepairSession {
         val item = inventory.firstOrNull { it.id == itemId } ?: return this
@@ -122,15 +133,37 @@ internal data class RepairSession(
 
     fun firstStartupFailure(): StartupStage? = when {
         !hasWorkingPart(ComputerPart.PowerSupply) ||
-            !hasWorkingPart(ComputerPart.MotherboardCable) -> StartupStage.Power
+            !hasWorkingPart(ComputerPart.MotherboardCable) ||
+            !hasEnoughPower() -> StartupStage.Power
         !hasWorkingPart(ComputerPart.Motherboard) ||
             !hasWorkingPart(ComputerPart.Processor) ||
             ComputerPart.memorySlots.none(::hasWorkingPart) -> StartupStage.SelfTest
-        ComputerPart.graphicsSlots.indices.none { index ->
-            hasWorkingPart(ComputerPart.graphicsSlots[index]) && hasWorkingPart(ComputerPart.graphicsLeads[index])
-        } -> StartupStage.Video
+        ComputerPart.graphicsSlots.indices.none(::graphicsPowered) -> StartupStage.Video
         bootDisk == null -> StartupStage.BootDrive
         else -> null
+    }
+
+    private fun needsGraphicsLead(index: Int): Boolean =
+        parts[ComputerPart.graphicsSlots[index]]?.product?.graphics?.powerPins != 0
+
+    fun graphicsPowered(index: Int): Boolean =
+        hasWorkingPart(ComputerPart.graphicsSlots[index]) &&
+            (!needsGraphicsLead(index) || hasWorkingPart(ComputerPart.graphicsLeads[index]))
+
+    private fun hasEnoughPower(): Boolean {
+        val rated = parts[ComputerPart.PowerSupply]?.specification?.powerWatts ?: return true
+        if (rated <= 0) return true // Older saves may have no rated wattage.
+        // Approximate load for the current CPU, board, cooling and attached devices.
+        val baseLoad = if (hasWorkingPart(ComputerPart.Processor)) 110 else 45
+        val graphicsLoad = ComputerPart.graphicsSlots.indices.filter(::graphicsPowered).sumOf {
+            parts[ComputerPart.graphicsSlots[it]]?.product?.graphics?.boardWatts ?: 125
+        }
+        val memoryLoad = ComputerPart.memorySlots.count(::hasWorkingPart) * 3
+        val diskLoad = availableDisks.map { disk ->
+            val connection = parts[disk]?.product?.drive?.connection
+            if (connection == DriveInterface.SataHdd || (connection == null && disk == ComputerPart.HardDrive)) 10 else 6
+        }.sum()
+        return baseLoad + graphicsLoad + memoryLoad + diskLoad <= rated
     }
 
     val availableDisks: List<ComputerPart>
@@ -176,6 +209,7 @@ internal data class RepairSession(
 
     fun save(): List<String> = buildList {
         add("FreeBuild")
+        add("Balance=$balance")
         addAll(StoredComputer(assembly, parts, preferredDisk).encode())
         for ((location, items) in listOf("Item" to inventory, "Warehouse" to warehouse)) {
             for (item in items) {
@@ -215,8 +249,10 @@ internal data class RepairSession(
                 parts = active.parts,
                 inventory = inventory.map(::restoreItem),
                 warehouse = warehouse.map(::restoreItem),
+                balance = entries.firstOrNull { it.startsWith("Balance=") }
+                    ?.substringAfter('=')?.toIntOrNull()?.takeIf { it >= 0 } ?: StartingBalance,
             )
-            return pending.fold(session) { current, product -> current.buy(product) }
+            return pending.fold(session) { current, product -> current.receive(product) }
         }
     }
 }
