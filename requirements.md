@@ -32,7 +32,7 @@
 
 ## 工作台与拆装
 
-- 开始游戏后进入空工作台。先从物品栏拖入购买的机箱，再按安装位装入配件。所有机箱可装下当前目录的配件，包含两条内存、SATA 硬盘和 M.2 固态硬盘。放置机箱后，同型号侧板在物品栏供安装。机箱清空后可长按取回。
+- 开始游戏后进入空工作台。先从物品栏拖入购买的机箱，再按安装位装入配件。所有机箱支持本批 ATX 和 mATX 主板。内存、显卡和 M.2 固态硬盘的安装位由主板型号决定。放置机箱后，同型号侧板在物品栏供安装。机箱清空后可长按取回。
 - 零件按安装位置和前后遮挡关系展示。拆下机箱盖后才能接触内部，拆下散热器后才能接触处理器。
 - 横屏工作台右侧分设工具栏与物品栏。工具栏横向滚动，每格为方形图标，第一格放螺丝刀。选中后，高亮可操作的螺丝和空孔。用初始螺丝刀长按每颗螺丝或空孔约 0.9 秒，即可卸下或装回。
 - 拆装遵循遮挡和前置关系，螺丝和部件共用以触点为圆心的大进度环。提前松开即取消。完成后满环变绿，继续按住时在原位放大一次再还原。抬起发起长按的手指时，圆环立即消失。部件的螺丝全部拆下后，长按约 0.65 秒取下部件。拆下的部件自动进入物品栏。
@@ -43,6 +43,19 @@
 - 两根同规格内存条使用同一外观、名称，均可装入任一空闲内存槽。
 - CPU 散热器可单独购买、拆装，并提供散热功能。
 - 每个零部件都有 0～100 的耐久。商城新品耐久为 100。拆下后可在物品栏查看数值，低于 50 视为损坏。
+
+## 主板
+
+本批使用 LGA1200 和 DDR4，规格按当前的第十一代酷睿处理器计算。显卡位按物理全长 PCIe 插槽统计，M.2 仅计可安装 SSD 的插槽。每个位置独立记录部件、固定螺丝和硬盘系统。
+
+| 主板 | 全长 PCIe | M.2 SSD | DDR4 DIMM | 厂商规格 |
+| --- | ---: | ---: | ---: | --- |
+| 技嘉 Z590 AORUS MASTER rev. 1.0 | 3 | 3 | 4 | [技嘉](https://www.gigabyte.com/Motherboard/Z590-AORUS-MASTER-rev-10/sp) |
+| 华硕 TUF GAMING Z590-PLUS WIFI | 2 | 3 | 4 | [华硕](https://www.asus.com/motherboards-components/motherboards/tuf-gaming/tuf-gaming-z590-plus-wifi/techspec/) |
+| 华擎 H570 Steel Legend | 2 | 3 | 4 | [华擎](https://www.asrock.com/mb/Intel/H570%20Steel%20Legend/index.asp#Specification) |
+| 微星 B560M PRO-VDH | 1 | 2 | 4 | [微星](https://www.msi.com/Motherboard/B560M-PRO-VDH/Specification) |
+| 华硕 PRIME B560M-K | 1 | 2 | 2 | [华硕](https://www.asus.com/motherboards-components/motherboards/prime/prime-b560m-k/techspec/) |
+| 华硕 PRIME H510M-K | 1 | 1 | 2 | [华硕](https://www.asus.com/motherboards-components/motherboards/prime/prime-h510m-k/techspec/) |
 
 ## 平板与商城
 

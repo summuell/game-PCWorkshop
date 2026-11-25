@@ -76,6 +76,7 @@ internal fun WorkshopTablet(
             for (product in Product.entries.filter { it.category == category }) {
                 Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    product.board?.let { BoardThumbnail(it, Modifier.size(92.dp, 58.dp)) }
                     if (product.caseStyle != null) CaseShopThumbnail(product, Modifier.size(92.dp, 58.dp))
                     Column(Modifier.weight(1f)) {
                         GameText(product.shopName)

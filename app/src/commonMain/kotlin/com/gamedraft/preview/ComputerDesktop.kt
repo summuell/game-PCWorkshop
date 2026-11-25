@@ -19,10 +19,10 @@ import androidx.compose.ui.unit.dp
 
 private enum class Location(val title: String) {
     Desktop("桌面"), Computer("我的电脑"), Bin("回收站"), System("本地磁盘 (C:)"),
-    Data("本地磁盘 (D:)"), Extra("本地磁盘 (E:)"), Usb("移动磁盘 (U:)"), Hardware("配置检测");
+    Data("本地磁盘 (D:)"), Extra("本地磁盘 (E:)"), ExtraF("本地磁盘 (F:)"), ExtraG("本地磁盘 (G:)"), Usb("移动磁盘 (U:)"), Hardware("配置检测");
 
     val parent: Location get() = when (this) {
-        System, Data, Extra, Usb -> Computer
+        System, Data, Extra, ExtraF, ExtraG, Usb -> Computer
         Hardware -> Usb
         else -> Desktop
     }
@@ -72,8 +72,9 @@ internal fun ComputerDesktop(session: RepairSession, usb: Boolean) {
                                         FileRow(Location.System, "$systemGb GB") { page = Location.System }
                                         FileRow(Location.Data, "${total - systemGb} GB") { page = Location.Data }
                                     }
-                                    session.availableDisks.firstOrNull { it != system }?.let { disk ->
-                                        FileRow(Location.Extra, capacity(session, disk)) { page = Location.Extra }
+                                    val volumes = listOf(Location.Extra, Location.ExtraF, Location.ExtraG)
+                                    session.availableDisks.filter { it != system }.zip(volumes).forEach { (disk, volume) ->
+                                        FileRow(volume, capacity(session, disk)) { page = volume }
                                     }
                                     if (usb) FileRow(Location.Usb) { page = Location.Usb }
                                 }
@@ -82,7 +83,7 @@ internal fun ComputerDesktop(session: RepairSession, usb: Boolean) {
                                 }
                                 Location.Usb -> FileRow(Location.Hardware) { page = Location.Hardware }
                                 Location.Hardware -> HardwareReport(session)
-                                Location.Bin, Location.Data, Location.Extra -> Unit
+                                Location.Bin, Location.Data, Location.Extra, Location.ExtraF, Location.ExtraG -> Unit
                                 Location.Desktop -> Unit
                             }
                         }
@@ -158,7 +159,7 @@ private fun FileIcon(location: Location?, modifier: Modifier) {
                 tile(4,4,8,10,MutedText); tile(3,3,10,2,Color.White)
                 tile(6,7,1,5,dark); tile(9,7,1,5,dark)
             }
-            Location.System, Location.Data, Location.Extra, Location.Usb -> {
+            Location.System, Location.Data, Location.Extra, Location.ExtraF, Location.ExtraG, Location.Usb -> {
                 tile(2,5,12,7,MutedText); tile(3,6,10,2,Color.White)
                 tile(3,10,6,1,dark); tile(11,10,2,1,WindowAccent)
             }

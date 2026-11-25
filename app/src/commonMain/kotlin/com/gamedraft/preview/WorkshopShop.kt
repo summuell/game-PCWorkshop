@@ -15,13 +15,25 @@ internal enum class Product(
     val detail: String,
     val spec: HardwareSpecification = HardwareSpecification(),
     val caseStyle: CaseStyle? = null,
+    val board: BoardLayout? = null,
 ) {
     Air903(ShopCategory.Cases, ComputerPart.Chassis, "君主-AIR 903 BASE-黑色", "AIR 903", "黑色 · 网孔前板", caseStyle = CaseStyle.Mesh),
     H5Flow(ShopCategory.Cases, ComputerPart.Chassis, "恩杰-H5 Flow-白色", "H5 Flow", "白色 · 玻璃侧板", caseStyle = CaseStyle.Glass),
     North(ShopCategory.Cases, ComputerPart.Chassis, "分形工艺-North-炭黑色", "North", "炭黑色 · 胡桃木格栅", caseStyle = CaseStyle.Slats),
     PureBase500(ShopCategory.Cases, ComputerPart.Chassis, "德商必酷-Pure Base 500-深灰色", "Pure Base 500", "深灰色 · 封闭式面板", caseStyle = CaseStyle.Solid),
     Frame4000D(ShopCategory.Cases, ComputerPart.Chassis, "海盗船-FRAME 4000D-白色", "FRAME 4000D", "白色 · 三角孔前板", caseStyle = CaseStyle.Perforated),
-    B560(ShopCategory.Board, ComputerPart.Motherboard, "华硕-B560M-K", "ASUS PRIME B560M-K", "LGA1200 · 2 个 DDR4 插槽"),
+    Z590Master(ShopCategory.Board, ComputerPart.Motherboard, "技嘉-Z590 AORUS MASTER", "Z590 AORUS MASTER",
+        BoardLayout.Aorus.description, board = BoardLayout.Aorus),
+    TufZ590(ShopCategory.Board, ComputerPart.Motherboard, "华硕-TUF GAMING Z590-PLUS WIFI", "TUF GAMING Z590-PLUS WIFI",
+        BoardLayout.Tuf.description, board = BoardLayout.Tuf),
+    H570Steel(ShopCategory.Board, ComputerPart.Motherboard, "华擎-H570 Steel Legend", "H570 Steel Legend",
+        BoardLayout.Steel.description, board = BoardLayout.Steel),
+    B560ProVdh(ShopCategory.Board, ComputerPart.Motherboard, "微星-B560M PRO-VDH", "B560M PRO-VDH",
+        BoardLayout.ProVdh.description, board = BoardLayout.ProVdh),
+    B560(ShopCategory.Board, ComputerPart.Motherboard, "华硕-PRIME B560M-K", "ASUS PRIME B560M-K",
+        BoardLayout.PrimeB560.description, board = BoardLayout.PrimeB560),
+    H510(ShopCategory.Board, ComputerPart.Motherboard, "华硕-PRIME H510M-K", "ASUS PRIME H510M-K",
+        BoardLayout.PrimeH510.description, board = BoardLayout.PrimeH510),
     I5(ShopCategory.Cpu, ComputerPart.Processor, "英特尔-酷睿-i5-11400F", "Intel Core i5-11400F", "6 核 12 线程 · LGA1200"),
     CpuCooler(ShopCategory.Cooling, ComputerPart.Cooler, "英特尔-LGA1200-原装散热器", "Intel LGA1200", "下压式风冷 · LGA1200"),
     Dimm8(ShopCategory.Ram, ComputerPart.MemoryLeft, "金士顿-DDR4-3200-8GB", "DDR4-3200 8 GB", "台式机 DIMM · 单条",
@@ -53,9 +65,9 @@ internal data class InventoryItem(
     val storedComputer: StoredComputer? = null,
 ) {
     val label: String get() = when (type) {
-        ComputerPart.MemoryLeft, ComputerPart.MemoryRight -> "内存 ${part.specification.capacityGb}G"
+        in ComputerPart.memorySlots -> "内存 ${part.specification.capacityGb}G"
         ComputerPart.HardDrive -> "硬盘 ${part.specification.capacityGb / 1000}TB"
-        ComputerPart.Chassis -> part.product?.model ?: type.label
+        ComputerPart.Chassis, ComputerPart.Motherboard -> part.product?.model ?: type.label
         ComputerPart.SidePanel -> part.product?.model?.let { "$it 侧板" } ?: type.label
         else -> type.label
     }
@@ -66,16 +78,18 @@ internal fun RepairSession.hardwareReport(): List<Pair<String, String>> = buildL
     fun model(slot: ComputerPart) = detected(slot)?.let { it.product?.model ?: slot.label }
     model(ComputerPart.Processor)?.let { add("处理器" to it) }
     model(ComputerPart.Motherboard)?.let { add("主板" to it) }
-    val modules = listOf(ComputerPart.MemoryLeft, ComputerPart.MemoryRight).mapNotNull(::detected)
+    val modules = ComputerPart.memorySlots.mapNotNull(::detected)
     if (modules.isNotEmpty()) {
         val capacity = modules.sumOf { it.specification.capacityGb }
         val speed = modules.minOf { it.specification.memoryRateMt }
-        add("物理内存" to "${capacity} GB DDR4 · ${speed} MT/s · 已用插槽 ${modules.size}/2")
+        add("物理内存" to "${capacity} GB DDR4 · ${speed} MT/s · 已用插槽 ${modules.size}/${boardLayout.dimms}")
     }
-    model(ComputerPart.GraphicsCard)?.let { add("显示适配器" to it) }
+    for ((index, slot) in ComputerPart.graphicsSlots.withIndex()) {
+        model(slot)?.let { add("显示适配器 · PCIe ${index + 1}" to it) }
+    }
     for (drive in availableDisks) {
         val device = parts.getValue(drive)
-        val bus = if (drive == ComputerPart.SolidStateDrive) "NVMe" else "SATA"
-        add(drive.label to "${device.product?.model ?: drive.label} · ${device.specification.capacityGb} GB · $bus")
+        val bus = if (drive in ComputerPart.diskSlots) "NVMe" else "SATA"
+        add(drive.socketName to "${device.product?.model ?: drive.label} · ${device.specification.capacityGb} GB · $bus")
     }
 }

@@ -235,7 +235,7 @@ private fun SystemInstaller(power: ComputerPower, session: RepairSession) {
             GameText(if(session.availableDisks.isEmpty()) "未找到可用磁盘" else "选择系统安装位置",color=MutedText)
             for ((index, disk) in session.availableDisks.withIndex()) {
                 val capacity = session.parts.getValue(disk).specification.capacityGb
-                GameButton("磁盘 $index · ${session.parts.getValue(disk).product?.model ?: disk.label} · ${capacity} GB", { power.destination = disk })
+                GameButton("磁盘 $index · ${disk.socketName} · ${session.parts.getValue(disk).product?.model ?: disk.label} · ${capacity} GB", { power.destination = disk })
             }
         } else if (power.percent < 100) {
             GameText(when(power.percent) {

@@ -46,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import com.gamedraft.preview.resources.Res
 import com.gamedraft.preview.resources.workbench_assembled
-import com.gamedraft.preview.resources.workbench_board
 import com.gamedraft.preview.resources.workbench_clean
 import com.gamedraft.preview.resources.workbench_empty
 import org.jetbrains.compose.resources.imageResource
@@ -66,9 +65,9 @@ internal data class WorkbenchHold(val part: ComputerPart, val screw: Screw? = nu
 
     val label: String
         get() {
-            val fastener = screw ?: return part.label
+            val fastener = screw ?: return part.socketName
             val suffix = if (fastener.action == ScrewAction.Tighten) "螺丝孔" else "螺丝"
-            return "${part.label}$suffix ${fastener.index + 1}"
+            return "${part.socketName}$suffix ${fastener.index + 1}"
         }
 }
 
@@ -76,10 +75,9 @@ internal data class WorkbenchArtwork(
     val table: ImageBitmap,
     val emptyCase: ImageBitmap,
     val assembled: ImageBitmap,
-    val board: ImageBitmap,
 ) {
     val ready: Boolean
-        get() = listOf(table, emptyCase, assembled, board).all { it.width > 1 && it.height > 1 }
+        get() = listOf(table, emptyCase, assembled).all { it.width > 1 && it.height > 1 }
 }
 
 @Composable
@@ -87,7 +85,6 @@ internal fun loadWorkbenchArtwork() = WorkbenchArtwork(
     table = imageResource(Res.drawable.workbench_clean),
     emptyCase = imageResource(Res.drawable.workbench_empty),
     assembled = imageResource(Res.drawable.workbench_assembled),
-    board = imageResource(Res.drawable.workbench_board),
 )
 
 private data class PartArtwork(
@@ -108,11 +105,6 @@ private fun outline(first: Pair<Int, Int>, vararg remaining: Pair<Int, Int>) = P
 // Coordinates are measured in the same 1024 by 1536 view for every artwork layer.
 private val partArtwork = mapOf(
     ComputerPart.Chassis to PartArtwork(ChassisBounds),
-    ComputerPart.Motherboard to PartArtwork(
-        bounds(155, 367, 652, 960),
-        outline(170 to 367, 631 to 367, 649 to 378, 649 to 945, 637 to 959, 177 to 959, 164 to 946,
-            164 to 737, 155 to 721, 155 to 404, 170 to 404),
-    ),
     ComputerPart.Processor to PartArtwork(bounds(315, 492, 435, 621)),
     ComputerPart.PowerSupply to PartArtwork(bounds(154, 1004, 447, 1243)),
     ComputerPart.HardDrive to PartArtwork(
@@ -173,11 +165,17 @@ private val partArtwork = mapOf(
     ComputerPart.SidePanel to PartArtwork(bounds(153, 294, 822, 1246)),
 )
 
+private fun BoardGeometry.art(slot: ComputerPart): PartArtwork {
+    if (slot == ComputerPart.Motherboard) return PartArtwork(pcb)
+    return sockets[slot]?.let { PartArtwork(it) } ?: partArtwork.getValue(slot)
+}
+
 @Composable
 internal fun WorkbenchScene(
     artwork: WorkbenchArtwork,
     assembly: ComputerAssembly,
     chassis: Product?,
+    board: BoardGeometry,
     selectedPart: ComputerPart?,
     placementSlots: List<ComputerPart>,
     screwdriverSelected: Boolean,
@@ -234,11 +232,11 @@ internal fun WorkbenchScene(
                     chassis?.caseStyle?.let { drawChassis(it) }
                     for (part in renderParts) {
                         if (part == ComputerPart.Chassis) continue
-                        drawPart(artwork, part, chassis)
+                        drawInstalledPart(artwork, part, chassis, board)
                         if (part == ComputerPart.Processor && cpuHasPaste) {
                             drawThermalPaste(partArtwork.getValue(part).bounds.center)
                         }
-                        part.screws.forEachIndexed { index, screw ->
+                        board.screws(part).forEachIndexed { index, screw ->
                             if (assembly.hasScrew(part, index)) drawScrewHead(screw)
                             else drawScrewHole(screw)
                             if (screwdriverSelected) {
@@ -246,20 +244,20 @@ internal fun WorkbenchScene(
                             }
                         }
                     }
-                    if (selectedPart != null && assembly.isVisible(selectedPart)) drawPartHighlight(selectedPart)
-                    for (slot in placementSlots) drawPlacementGuide(slot, slot == hoveredSlot)
+                    if (selectedPart != null && assembly.isVisible(selectedPart)) drawPartHighlight(selectedPart, board)
+                    for (slot in placementSlots) drawPlacementGuide(slot, board, slot == hoveredSlot)
                 }
             }
             // Parts use the same stacking order for drawing and hit testing.
             for (part in visibleParts) {
                 key(part) {
                     if (pasteSelected && part == ComputerPart.Processor) {
-                        Box(Modifier.positionOnScene(partArtwork.getValue(part).hitArea)
+                        Box(Modifier.positionOnScene(board.art(part).hitArea)
                             .semantics { contentDescription = "给处理器涂硅脂" }
                             .clickable(role = Role.Button, onClick = onPaste))
                     } else HoldZone(
                         target = WorkbenchHold(part),
-                        modifier = Modifier.positionOnScene(partArtwork.getValue(part).hitArea),
+                        modifier = Modifier.positionOnScene(board.art(part).hitArea),
                         onSelect = onSelect,
                         onBeginHold = onBeginHold,
                         onEndHold = onEndHold,
@@ -269,7 +267,7 @@ internal fun WorkbenchScene(
             }
             if (screwdriverSelected) {
                 for (part in visibleParts) {
-                    part.screws.forEachIndexed { index, screw ->
+                    board.screws(part).forEachIndexed { index, screw ->
                         val action = assembly.screwAction(part, index)
                         if (action != null) {
                             key(part, index, action) {
@@ -330,6 +328,7 @@ private fun HoldZone(
 
 internal fun placementSlot(
     slots: List<ComputerPart>,
+    board: BoardGeometry,
     workbench: LayoutCoordinates?,
     mat: LayoutCoordinates?,
     position: Offset,
@@ -344,10 +343,10 @@ internal fun placementSlot(
     val left = (width - WorkbenchHeight * scale) / 2f
     val top = (height - ArtworkWidth * scale) / 2f
     val artPoint = Offset((point.y - top) / scale, WorkbenchTop + WorkbenchHeight - (point.x - left) / scale)
-    slots.firstOrNull { placementArea(it).contains(artPoint) }?.let { return it }
+    slots.firstOrNull { placementArea(it, board).contains(artPoint) }?.let { return it }
     // Give narrow sockets a touch margin. Between two RAM slots, snap to the nearer one.
-    return slots.filter { placementArea(it).inflate(24f).contains(artPoint) }
-        .minByOrNull { (placementArea(it).center - artPoint).getDistanceSquared() }
+    return slots.filter { placementArea(it, board).inflate(24f).contains(artPoint) }
+        .minByOrNull { (placementArea(it, board).center - artPoint).getDistanceSquared() }
 }
 
 private fun DrawScope.drawThermalPaste(center: Offset) {
@@ -370,8 +369,14 @@ internal fun PartThumbnail(artwork: WorkbenchArtwork, part: ComputerPart, produc
 }
 
 internal fun DrawScope.drawPartPreview(artwork: WorkbenchArtwork, part: ComputerPart, product: Product?, position: Offset, available: Size) {
-    fitArtwork(partArtwork.getValue(part).bounds, position, available) {
-        drawPart(artwork, part, product)
+    if (part == ComputerPart.Motherboard) {
+        val board = BoardGeometry[product?.board ?: BoardLayout.PrimeB560]
+        fitArtwork(board.pcb, position, available) { drawBoard(board) }
+        return
+    }
+    val base = part.compatibleSlots.first()
+    fitArtwork(partArtwork.getValue(base).bounds, position, available) {
+        drawPart(artwork, base, product)
     }
 }
 
@@ -444,6 +449,29 @@ private fun DrawScope.drawSheet(image: ImageBitmap) {
     drawImage(image = image, dstSize = IntSize(ArtworkWidth, ArtworkHeight), filterQuality = FilterQuality.None)
 }
 
+private fun DrawScope.drawInstalledPart(artwork: WorkbenchArtwork, slot: ComputerPart, chassis: Product?, board: BoardGeometry) {
+    if (slot == ComputerPart.Motherboard) {
+        drawBoard(board)
+        return
+    }
+    if (slot in ComputerPart.graphicsLeads) {
+        drawGraphicsLead(slot, board)
+        return
+    }
+    val destination = board.sockets[slot]
+    val base = slot.compatibleSlots.first()
+    if (destination == null) {
+        drawPart(artwork, slot, chassis)
+    } else {
+        val source = partArtwork.getValue(base).bounds
+        withTransform({
+            translate(destination.left, destination.top)
+            scale(destination.width/source.width, destination.height/source.height, pivot = Offset.Zero)
+            translate(-source.left, -source.top)
+        }) { drawPart(artwork, base) }
+    }
+}
+
 private fun DrawScope.drawPart(artwork: WorkbenchArtwork, part: ComputerPart, product: Product? = null) {
     if (part == ComputerPart.Chassis || part == ComputerPart.SidePanel) {
         val style = product?.caseStyle ?: return
@@ -451,21 +479,11 @@ private fun DrawScope.drawPart(artwork: WorkbenchArtwork, part: ComputerPart, pr
         return
     }
     val art = partArtwork.getValue(part)
-    if (part == ComputerPart.MemoryRight) {
-        val source = partArtwork.getValue(ComputerPart.MemoryLeft).bounds
-        withTransform({ translate(art.bounds.left - source.left, art.bounds.top - source.top) }) {
-            drawPart(artwork, ComputerPart.MemoryLeft)
-        }
-        return
-    }
     if (part == ComputerPart.Processor) {
         drawProcessor(art.bounds)
         return
     }
-    val image = when (part) {
-        ComputerPart.Motherboard -> artwork.board
-        else -> artwork.assembled
-    }
+    val image = artwork.assembled
     clipRect(art.bounds.left, art.bounds.top, art.bounds.right, art.bounds.bottom) {
         if (art.outline == null) {
             drawSheet(image)
@@ -494,8 +512,8 @@ private fun DrawScope.drawProcessor(bounds: Rect) {
     )
 }
 
-private fun DrawScope.drawPartHighlight(part: ComputerPart) {
-    val art = partArtwork.getValue(part)
+private fun DrawScope.drawPartHighlight(part: ComputerPart, board: BoardGeometry) {
+    val art = board.art(part)
     val color = Color(0xFFFFC064)
     val stroke = Stroke(width = 6f)
     val shape = art.outline
@@ -506,13 +524,13 @@ private fun DrawScope.drawPartHighlight(part: ComputerPart) {
     }
 }
 
-private fun placementArea(part: ComputerPart): Rect {
-    val area = partArtwork.getValue(part).hitArea
-    return if (part == ComputerPart.MemoryLeft || part == ComputerPart.MemoryRight) area else area.inflate(18f)
+private fun placementArea(part: ComputerPart, board: BoardGeometry): Rect {
+    val area = board.art(part).hitArea
+    return if (part in ComputerPart.memorySlots || part in ComputerPart.diskSlots || part in ComputerPart.graphicsSlots) area else area.inflate(18f)
 }
 
-private fun DrawScope.drawPlacementGuide(part: ComputerPart, overGuide: Boolean) {
-    val frame = placementArea(part)
+private fun DrawScope.drawPlacementGuide(part: ComputerPart, board: BoardGeometry, overGuide: Boolean) {
+    val frame = placementArea(part, board)
     val color = if (overGuide) Color(0xFFAEF3AB) else Color(0xFF7ED5C9)
     drawRect(color.copy(alpha = if (overGuide) 0.24f else 0.13f), frame.topLeft, frame.size)
     val dash = if (overGuide) null else PathEffect.dashPathEffect(floatArrayOf(16f, 10f))

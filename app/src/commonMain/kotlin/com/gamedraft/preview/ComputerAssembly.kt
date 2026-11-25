@@ -20,16 +20,24 @@ internal enum class ComputerPart(val label: String, val screws: List<MountingScr
         listOf(MountingScrew(579, 1056), MountingScrew(768, 1056), MountingScrew(577, 1199), MountingScrew(768, 1207)),
     ),
     SolidStateDrive("固态硬盘", listOf(MountingScrew(493, 898, 10))),
+    SolidStateDrive2("固态硬盘", listOf(MountingScrew(493, 898, 10))),
+    SolidStateDrive3("固态硬盘", listOf(MountingScrew(493, 898, 10))),
     MemoryLeft("内存条"),
     MemoryRight("内存条"),
+    MemoryThird("内存条"),
+    MemoryFourth("内存条"),
     Cooler(
         "散热器",
         listOf(MountingScrew(269, 423, 12), MountingScrew(469, 423, 12),
             MountingScrew(270, 641, 12), MountingScrew(469, 641, 12)),
     ),
     GraphicsCard("显卡", listOf(MountingScrew(143, 736, 9))),
+    GraphicsCard2("显卡", listOf(MountingScrew(143, 736, 9))),
+    GraphicsCard3("显卡", listOf(MountingScrew(143, 736, 9))),
     MotherboardCable("主板供电线"),
     GraphicsCable("显卡供电线"),
+    GraphicsCable2("显卡供电线"),
+    GraphicsCable3("显卡供电线"),
     DriveCable("硬盘连接线"),
     SidePanel(
         "机箱盖",
@@ -39,20 +47,41 @@ internal enum class ComputerPart(val label: String, val screws: List<MountingScr
 
     val compatibleSlots: List<ComputerPart>
         get() = when (this) {
-            MemoryLeft, MemoryRight -> listOf(MemoryLeft, MemoryRight)
+            in memorySlots -> memorySlots
+            in diskSlots -> diskSlots
+            in graphicsSlots -> graphicsSlots
+            in graphicsLeads -> graphicsLeads
             else -> listOf(this)
+        }
+
+    val socketName: String
+        get() = when (this) {
+            in diskSlots -> "M.2_${diskSlots.indexOf(this) + 1}"
+            in graphicsSlots -> "PCIe ${graphicsSlots.indexOf(this) + 1}"
+            in graphicsLeads -> "PCIe ${graphicsLeads.indexOf(this) + 1} 供电"
+            in memorySlots -> "DIMM ${memorySlots.indexOf(this) + 1}"
+            HardDrive -> "SATA"
+            else -> label
         }
 
     val mounts: List<ComputerPart>
         get() = when (this) {
-            Processor, SolidStateDrive, MemoryLeft, MemoryRight, GraphicsCard -> listOf(Motherboard)
+            Processor, in diskSlots, in memorySlots, in graphicsSlots -> listOf(Motherboard)
             Cooler -> listOf(Processor)
             MotherboardCable -> listOf(Motherboard, PowerSupply)
-            GraphicsCable -> listOf(GraphicsCard, PowerSupply)
+            in graphicsLeads -> listOf(graphicsSlots[graphicsLeads.indexOf(this)], PowerSupply)
             DriveCable -> listOf(HardDrive, PowerSupply, Motherboard)
             Chassis -> emptyList()
             else -> listOf(Chassis)
         }
+
+    companion object {
+        val memorySlots = listOf(MemoryLeft, MemoryRight, MemoryThird, MemoryFourth)
+        val diskSlots = listOf(SolidStateDrive, SolidStateDrive2, SolidStateDrive3)
+        val graphicsSlots = listOf(GraphicsCard, GraphicsCard2, GraphicsCard3)
+        val graphicsLeads = listOf(GraphicsCable, GraphicsCable2, GraphicsCable3)
+    }
+
 }
 
 internal data class AssemblyBlocker(val part: ComputerPart, val removeFirst: Boolean) {

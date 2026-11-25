@@ -282,7 +282,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     val placementSlots = placementItem?.let { item ->
         item.type.compatibleSlots.filter { session.canInstall(item, it) }
     }.orEmpty()
-    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, workbench, mat, it.position) }
+    val hoveredSlot = currentDrag?.let { placementSlot(placementSlots, BoardGeometry[session.boardLayout], workbench, mat, it.position) }
 
     fun selectPart(part: ComputerPart) {
         selectedItemId = null
@@ -336,7 +336,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
 
     fun dropItem(item: InventoryItem, point: Offset) {
         val available = item.type.compatibleSlots.filter { session.canInstall(item, it) }
-        val slot = placementSlot(available, workbench, mat, point) ?: return
+        val slot = placementSlot(available, BoardGeometry[session.boardLayout], workbench, mat, point) ?: return
         session = session.install(item.id, slot)
         selectedItemId = null
         selectedName = slot.name.takeIf { slot.screws.isNotEmpty() }
@@ -397,7 +397,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     ) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize().onGloballyPositioned { mat = it }) {
-                if (artwork.ready) WorkbenchScene(artwork, assembly, session.chassis, selection, placementSlots,
+                if (artwork.ready) WorkbenchScene(artwork, assembly, session.chassis, BoardGeometry[session.boardLayout], selection, placementSlots,
                     screwdriverSelected, tool == BenchTool.Paste, session.parts[ComputerPart.Processor]?.hasPaste == true,
                     { session = session.applyPasteToMountedCpu() }, hoveredSlot, ::selectPart, ::beginHold, ::endHold, ::performHold,
                     Modifier.fillMaxSize())

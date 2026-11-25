@@ -46,6 +46,7 @@ internal data class RepairSession(
     val warehouse: List<InventoryItem> = emptyList(),
     val inventory: List<InventoryItem> = emptyList(),
 ) {
+    val boardLayout: BoardLayout get() = parts[ComputerPart.Motherboard]?.product?.board ?: BoardLayout.PrimeB560
     val chassis: Product? get() = parts[ComputerPart.Chassis]?.product
 
     fun buy(product: Product): RepairSession =
@@ -77,7 +78,7 @@ internal data class RepairSession(
             parts = if (part == ComputerPart.Cooler && cpu != null) {
                 remaining + (ComputerPart.Processor to cpu.copy(hasPaste = false))
             } else remaining,
-            inventory = listOf(newItem(part, instance)) + inventory,
+            inventory = listOf(newItem(part.compatibleSlots.first(), instance)) + inventory,
         )
     }
 
@@ -92,7 +93,7 @@ internal data class RepairSession(
     }
 
     fun canInstall(item: InventoryItem, slot: ComputerPart): Boolean =
-        slot in item.type.compatibleSlots && assembly.canInstall(slot) &&
+        slot in item.type.compatibleSlots && boardLayout.supports(slot) && assembly.canInstall(slot) &&
             (slot != ComputerPart.SidePanel || item.part.product == chassis)
 
     fun install(itemId: Int, slot: ComputerPart): RepairSession {
@@ -124,15 +125,16 @@ internal data class RepairSession(
             !hasWorkingPart(ComputerPart.MotherboardCable) -> StartupStage.Power
         !hasWorkingPart(ComputerPart.Motherboard) ||
             !hasWorkingPart(ComputerPart.Processor) ||
-            !(hasWorkingPart(ComputerPart.MemoryLeft) || hasWorkingPart(ComputerPart.MemoryRight)) -> StartupStage.SelfTest
-        !hasWorkingPart(ComputerPart.GraphicsCard) ||
-            !hasWorkingPart(ComputerPart.GraphicsCable) -> StartupStage.Video
+            ComputerPart.memorySlots.none(::hasWorkingPart) -> StartupStage.SelfTest
+        ComputerPart.graphicsSlots.indices.none { index ->
+            hasWorkingPart(ComputerPart.graphicsSlots[index]) && hasWorkingPart(ComputerPart.graphicsLeads[index])
+        } -> StartupStage.Video
         bootDisk == null -> StartupStage.BootDrive
         else -> null
     }
 
     val availableDisks: List<ComputerPart>
-        get() = listOf(ComputerPart.SolidStateDrive, ComputerPart.HardDrive).filter {
+        get() = (ComputerPart.diskSlots + ComputerPart.HardDrive).filter {
             hasWorkingPart(it) && (it != ComputerPart.HardDrive || hasWorkingPart(ComputerPart.DriveCable))
         }
 
