@@ -259,6 +259,8 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     val artwork = loadWorkbenchArtwork()
     var session by sessionState
     var monitorOpen by remember { mutableStateOf(false) }
+    // Inventory cells survive tablet/menu transitions and can retain their press callback.
+    val acceptsWorkbenchInput by rememberUpdatedState(!paused && !tabletOpen && !monitorOpen)
     val power = remember(session.assembly, session.parts[ComputerPart.Processor]?.hasPaste) { ComputerPower() }
     RunComputer(power, session, paused, onInstall = { disk -> session = session.finishInstallation(disk) })
     var selectedName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -288,7 +290,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     fun canHold(target: WorkbenchHold): Boolean {
-        if (paused || tabletOpen || monitorOpen) return false
+        if (!acceptsWorkbenchInput) return false
         val screw = target.screw ?: return session.assembly.canRemove(target.part)
         return screwdriverSelected && session.assembly.screwAction(target.part, screw.index) == screw.action
     }
@@ -327,7 +329,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
 
     fun armInventoryDrag(item: InventoryItem, id: PointerId) {
         val start = contactPoints[id] ?: return
-        if (!paused && !tabletOpen && press == null && inventoryContact == null) {
+        if (acceptsWorkbenchInput && press == null && inventoryContact == null) {
             inventoryContact = InventoryContact(item, id, start)
         }
     }
