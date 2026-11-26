@@ -5,3 +5,8 @@
 /dist/
 /local.properties
 *.apk
+/artifacts/
+*.aab
+*.jks
+*.keystore
+/keystore.properties
