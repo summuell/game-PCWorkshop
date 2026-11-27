@@ -29,7 +29,7 @@
 | 11 月 23–24 日 | 加入手动电源、重启、耐久、散热与硅脂、U 盘装系统、虚拟桌面、配置检测、平板商城和本地存档。测试订单先用显卡线松动，后改为重装系统。 |
 | 11 月 24–25 日 | 按设计决定移除全部测试订单与预装机，改为空工作台和五款可购买机箱。实现半成品整机收纳、直接到货和手动仓储，修复打开商城后拖放机箱失败的问题。 |
 | 11 月 25 日 | 六款主板支持独立插槽。硬盘、内存、显卡、电源各增加五款。商城全部定价，加入钱包、旧档兼容和不同配置的供电判定。 |
-| 11 月 27 日 | U 盘新增硬件跑分，支持四阶段负载演示、综合分和逐设备结果。 |
+| 11 月 27 日 | U 盘新增硬件跑分，支持四阶段负载演示、综合分和逐设备结果。平板新增维修台，可维修或合并物品栏里的单件配件。 |
 
 自由装机配件扩充对应 Git 提交 `263c8c5`。安卓构建配置目前为 `0.1.2`（versionCode 3）。历史 APK 早于最新网页的商城与配件扩充。
 
@@ -55,7 +55,7 @@
 | 正式订单与交付 | 客户只说症状。交单页用短目标，未完成为绿色，完成后灰字加删除线。交付前由玩家实际开机检测。 | 重建正式订单池、收机与交付流程。历史目标有「配件完好」「正常启动」，重装订单还有「系统已重装」。自由装机版当前没有订单入口。 |
 | 原机配置验收 | 记录接单时原配置。交付要零件齐全、无坏件且无降级。硬盘允许同品牌替换，容量和耐久均不得低于原盘。 | 为正式订单保存原机基准，明确其他类别如何比较性能，并验证换件后的交付。 |
 | 故障排查与耐久 | 用黑屏、启动停滞等现象和玩家操作提供线索。健康订单配件曾约定为 50–100 耐久，商城新品为 100，低于 50 视为损坏。 | 扩充内存、硬盘等独立故障表现，设计低耐久的进一步作用和更多检测工具。故障原因由玩家判断，避免直接播报。 |
-| 维修与经营 | 前期通过换件赚取有限利润，后期可修理零部件。平板计划支持出售配件和升级工具。 | 解锁条件、修理手段、工具商品、回收价格、工单报酬和正式经济平衡待定。¥50,000 是测试开局资金。 |
+| 维修与经营 | 前期通过换件赚取有限利润，后期可修理零部件。平板计划支持出售配件和升级工具。 | 基础维修与合并已实现。解锁条件、维修台升级、工具商品、回收价格、工单报酬和正式经济平衡待定。¥50,000 是测试开局资金。 |
 | 硬件与美术 | 参考现实型号、接口、容量、插槽和外观，采用原创像素图形。 | 继续丰富 CPU、散热及其他平台和兼容规则。当前仅有一种 CPU，供电按估算负载判断，内存速率按当前平台上限简化。 |
 | 发布与验证 | 网页链接用于频繁测试，安卓用于最终交付。 | 项目正式名称待定。最新配件版仍需安卓真机回归，正式发行版本、签名与发布渠道待定。 |
 
@@ -110,12 +110,20 @@
 
 ## 平板与商城
 
-- 右上角的平板入口在「开机检测」或「工作台」右侧，主界面、工作台、检测及菜单均可打开。当前自由装机版提供商城和仓库。
+- 右上角的平板入口在「开机检测」或「工作台」右侧，主界面、工作台、检测及菜单均可打开。当前自由装机版提供商城、仓库和维修台。
 - 商城包含机箱、主板、CPU、散热、内存、显卡、电源、硬盘、线材和工具分类。商城商品使用「类别-厂商-系列或接口-型号及规格」命名。商品标注游戏内测试价。新开局有 ¥50,000，足够买下各型号一件并搭配多套整机。购买从余额扣款后直接入物品栏，余额不足时购买按钮置灰。工具分类暂空。余额随存档保存，早期无余额字段的存档读入时获得测试资金。在仓库页面可逐件存入或取出，收纳整机、配件耐久、硅脂和系统状态随物品转移。旧存档中待签收的配件在读档时自动进入物品栏。
 - 空工作台也显示「开机检测」入口。无机箱时，电源、重启和插入 U 盘按钮置灰。放置机箱后可手动尝试开机，主机依照已安装硬件显示启动过程和对应故障现象。
 
 - 显示器页面右上角的「工作台」和工作台页面的「开机检测」共用同一按钮位置。显示器页面的电源键控制开关机，通电时发光。重启键重新开始启动过程。启动现象显示在屏幕内，工作台省略螺丝数量提示。
 - 工具栏第二格是硅脂。拆下 CPU 散热器时，CPU 上的硅脂失效。选中硅脂后可点物品栏内的 CPU 或露出的 CPU 重涂，台面上的 CPU 会显示明亮的硅脂斑。散热器缺失或损坏时通电 5 秒后关机，散热器完好但 CPU 缺硅脂时通电 10 秒后关机。
+
+## 维修台
+
+在平板中打开「维修台」。要处理已装配件，先拆进物品栏。仓库里的配件可以取出后操作。收纳的整机可先放回工作台再拆件。
+
+- 维修一件配件。成功率为当前耐久的一半，耐久 80 对应 40%，耐久 81 对应 40.5%。成功恢复到 100，失败降到 0。耐久 0 的配件不能再次维修，可以用作合并材料。
+- 合并两个同品牌、同型号、同容量的配件。每件最低按 10 耐久折算，相加后取 80%，向下取整并封顶 100。合并必定成功，保留主件并消耗副件。硬盘沿用主件的系统状态。
+- 维修和合并的升级列入后续开发。
 
 ## 硬盘、内存、显卡与电源
 
@@ -127,6 +135,33 @@
 - 内存规格参考 [英睿达 DDR4](https://www.crucial.com/memory/ddr4/ct4g4dfs8266)、[金士顿 ValueRAM](https://www.kingston.com/datasheets/KVR26N19S8_8.pdf)、[FURY Beast DDR4](https://www.kingston.com/en/memory/gaming/kingston-fury-beast-ddr4-memory) 和 [i5-11400F 的内存支持](https://www.intel.com/content/www/us/en/products/sku/212271/intel-core-i511400f-processor-12m-cache-up-to-4-40-ghz/specifications.html)。
 - 显卡规格参考 [微星 GT 1030](https://www.msi.com/Graphics-Card/GeForce-GT-1030-2G-LP-OC/Specification)、[七彩虹 GTX 1660 SUPER](https://www.colorful.cn/home/product?id=1719&mid=102)、[蓝宝石 PULSE RX 6600](https://www.sapphiretech.com/en/consumer/pulse-radeon-rx-6600-8g-gddr6)、[微星 RTX 3060](https://www.msi.com/Graphics-Card/GeForce-RTX-3060-VENTUS-2X-12G-OC/Specification)、[RTX 4060](https://www.msi.com/Graphics-Card/GeForce-RTX-4060-VENTUS-2X-BLACK-8G-OC/Specification) 和 [RTX 4070](https://www.msi.com/Graphics-Card/GeForce-RTX-4070-VENTUS-2X-12G-OC/Specification)。
 - 电源规格参考 [海盗船 CX450](https://www.corsair.com/ww/en/p/psu/cp-9020120-ww/cx-series-cx450-450-watt-80-plus-bronze-certified-atx-psu-ww-cp-9020120-ww)、[CX650](https://www.corsair.com/ww/en/p/psu/cp-9020278-na/cx-series-cx650-650-watt-80-plus-bronze-atx-power-supply-cp-9020278-na)、[RM750x](https://www.corsair.com/ww/en/p/psu/cp-9020199-eu/rmx-series-rm750x-750-watt-80-plus-gold-fully-modular-atx-psu-cp-9020199-eu)、[RM850x](https://www.corsair.com/us/en/p/psu/cp-9020200-na/rmx-series-rm850x-850-watt-80-plus-gold-fully-modular-atx-psu-cp-9020200-na) 和 [海韵 FOCUS GX](https://seasonic.com/power-supplies/filter/product_cat-focus-series/)。
+
+## 当前硬件型号清单
+
+| 类别 | 品牌 | 型号 | 规格 |
+| --- | --- | --- | --- |
+| CPU | 英特尔 Intel | Core i5-11400F | 6 核 12 线程，LGA1200 |
+| 显卡 | 微星 MSI | GeForce GT 1030 2G LP OC | 2 GB GDDR5 |
+| 显卡 | 七彩虹 Colorful | 战斧 GeForce GTX 1660 SUPER | 6 GB GDDR6 |
+| 显卡 | 蓝宝石 Sapphire | PULSE Radeon RX 6600 | 8 GB GDDR6 |
+| 显卡 | 微星 MSI | GeForce RTX 3060 VENTUS 2X 12G OC | 12 GB GDDR6 |
+| 显卡 | 微星 MSI | GeForce RTX 4060 VENTUS 2X BLACK 8G OC | 8 GB GDDR6 |
+| 显卡 | 微星 MSI | GeForce RTX 4070 VENTUS 2X 12G OC | 12 GB GDDR6X |
+| 内存 | 英睿达 Crucial | CT4G4DFS8266 | 4 GB DDR4-2666 |
+| 内存 | 金士顿 Kingston | ValueRAM KVR26N19S8/8 | 8 GB DDR4-2666 |
+| 内存 | 金士顿 Kingston | FURY Beast KF432C16BB/8 | 8 GB DDR4-3200 |
+| 内存 | 金士顿 Kingston | FURY Beast KF426C16BB/16 | 16 GB DDR4-2666 |
+| 内存 | 金士顿 Kingston | FURY Beast KF432C16BB/16 | 16 GB DDR4-3200 |
+| 内存 | 金士顿 Kingston | FURY Beast KF432C16BB/32 | 32 GB DDR4-3200 |
+| 内存 | 金士顿 Kingston | FURY Beast KF436C18BB/32 | 32 GB DDR4-3600 |
+| 硬盘 | 希捷 Seagate | BarraCuda ST1000DM010 | 1 TB，SATA HDD |
+| 硬盘 | 金士顿 Kingston | NV2 | 250 GB，M.2 NVMe SSD |
+| 硬盘 | 西部数据 WD | Blue SA510 | 500 GB，2.5 英寸 SATA SSD |
+| 硬盘 | 金士顿 Kingston | KC3000 | 512 GB，M.2 NVMe SSD |
+| 硬盘 | 希捷 Seagate | IronWolf ST2000VN004 | 2 TB，SATA HDD |
+| 硬盘 | 金士顿 Kingston | KC3000 | 1 TB（游戏内 1024 GB），M.2 NVMe SSD |
+| 硬盘 | 西部数据 WD | Blue WD40EZAX | 4 TB，SATA HDD |
+| 硬盘 | 三星 Samsung | 990 PRO | 2 TB，M.2 NVMe SSD |
 
 ## 桌面与安装介质
 

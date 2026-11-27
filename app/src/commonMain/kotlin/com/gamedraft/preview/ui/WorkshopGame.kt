@@ -90,7 +90,7 @@ internal val Background = Color(0xFF10171F)
 internal val Panel = Color(0xFF1C2832)
 internal val SlotBackground = Color(0xFF141D25)
 internal val Border = Color(0xFF455764)
-private val TextColor = Color(0xFFF3EAE0)
+internal val TextColor = Color(0xFFF3EAE0)
 internal val MutedText = Color(0xFFB7C3CA)
 internal val Amber = Color(0xFFFFBC70)
 private val DarkInk = Color(0xFF302012)
@@ -165,11 +165,8 @@ internal fun WorkshopGame(
                                 Box(Modifier.matchParentSize().clickable(
                                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                                     indication = null) {})
-                                WorkshopTablet(sessionState.value, tabletPage, { tabletPage = it },
-                                    onClose = { tabletOpen = false },
-                                    onBuy = { sessionState.value = sessionState.value.buy(it) },
-                                    onDeposit = { sessionState.value = sessionState.value.deposit(it) },
-                                    onWithdraw = { sessionState.value = sessionState.value.withdraw(it) })
+                                WorkshopTablet(sessionState, tabletPage, { tabletPage = it },
+                                    onClose = { tabletOpen = false })
                             }
                         }
                         FloatingMenuButton { menuOpen = true }

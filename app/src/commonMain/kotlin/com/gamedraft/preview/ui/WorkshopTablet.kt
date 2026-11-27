@@ -2,6 +2,7 @@ package com.gamedraft.preview
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -24,18 +25,16 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
-internal enum class TabletPage { Shop, Warehouse }
+internal enum class TabletPage { Shop, Warehouse, Maintenance }
 
 @Composable
 internal fun WorkshopTablet(
-    session: RepairSession,
+    sessionState: MutableState<RepairSession>,
     page: TabletPage,
     onPageChanged: (TabletPage) -> Unit,
     onClose: () -> Unit,
-    onBuy: (Product) -> Unit,
-    onDeposit: (Int) -> Unit,
-    onWithdraw: (Int) -> Unit,
 ) {
+    var session by sessionState
     var category by rememberSaveable { mutableStateOf(ShopCategory.Cases) }
     val artwork = loadWorkbenchArtwork()
     Column(
@@ -57,13 +56,22 @@ internal fun WorkshopTablet(
             GameButton("商城", { onPageChanged(TabletPage.Shop) }, Modifier.weight(1f), primary = page == TabletPage.Shop)
             GameButton("仓库", { onPageChanged(TabletPage.Warehouse) },
                 Modifier.weight(1f), primary = page == TabletPage.Warehouse)
+            GameButton("维修台", { onPageChanged(TabletPage.Maintenance) },
+                Modifier.weight(1f), primary = page == TabletPage.Maintenance)
         }
-        if (page == TabletPage.Warehouse) {
-            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StorageList("物品栏", session.inventory, "存入", onDeposit, Modifier.weight(1f))
-                StorageList("仓库", session.warehouse, "取出", onWithdraw, Modifier.weight(1f))
+        when (page) {
+            TabletPage.Warehouse -> {
+                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StorageList("物品栏", session.inventory, "存入", { session = session.deposit(it) }, Modifier.weight(1f))
+                    StorageList("仓库", session.warehouse, "取出", { session = session.withdraw(it) }, Modifier.weight(1f))
+                }
+                return
             }
-            return
+            TabletPage.Maintenance -> {
+                PartMaintenancePage(sessionState, artwork, Modifier.weight(1f).fillMaxWidth())
+                return
+            }
+            TabletPage.Shop -> Unit
         }
         val scroll = key(category) { rememberScrollState() }
         Column(
@@ -91,7 +99,7 @@ internal fun WorkshopTablet(
                         GameText(product.detail, fontSize = 13, color = MutedText)
                     }
                     GameText(yuan(product.price), fontSize = 14, color = Amber)
-                    GameButton(if (affordable) "购买" else "余额不足", { onBuy(product) }, enabled = affordable)
+                    GameButton(if (affordable) "购买" else "余额不足", { session = session.buy(product) }, enabled = affordable)
                 }
             }
         }
