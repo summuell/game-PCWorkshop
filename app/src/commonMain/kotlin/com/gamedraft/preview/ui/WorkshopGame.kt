@@ -343,7 +343,7 @@ private fun WorkbenchScreen(sessionState: androidx.compose.runtime.MutableState<
     }
 
     if (monitorOpen) {
-        StartupMonitor(power, session, onClose = { monitorOpen = false })
+        StartupMonitor(power, session, paused || tabletOpen, onClose = { monitorOpen = false })
         return
     }
 

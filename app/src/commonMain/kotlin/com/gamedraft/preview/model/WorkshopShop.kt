@@ -167,22 +167,24 @@ internal data class InventoryItem(
     }
 }
 
-private fun graphicsMemoryGb(part: HardwarePart): Int =
+internal fun graphicsMemoryGb(part: HardwarePart): Int =
     part.specification.capacityGb.takeIf { it > 0 } ?: part.product?.spec?.capacityGb ?: 0
 
+internal fun List<HardwarePart>.effectiveMemoryRate(): Int =
+    minOfOrNull { it.specification.memoryRateMt }?.coerceIn(0, 3200) ?: 0
+
 internal fun RepairSession.hardwareReport(): List<Pair<String, String>> = buildList {
-    fun detected(slot: ComputerPart) = parts[slot]?.takeIf { it.working && assembly.isInstalled(slot) }
-    fun model(slot: ComputerPart) = detected(slot)?.let { it.product?.model ?: slot.label }
+    fun model(slot: ComputerPart) = detectedPart(slot)?.let { it.product?.model ?: slot.label }
     model(ComputerPart.Processor)?.let { add("处理器" to it) }
     model(ComputerPart.Motherboard)?.let { add("主板" to it) }
-    val modules = ComputerPart.memorySlots.mapNotNull(::detected)
+    val modules = ComputerPart.memorySlots.mapNotNull(::detectedPart)
     if (modules.isNotEmpty()) {
         val capacity = modules.sumOf { it.specification.capacityGb }
-        val speed = modules.minOf { it.specification.memoryRateMt }.coerceAtMost(3200)
+        val speed = modules.effectiveMemoryRate()
         add("物理内存" to "${capacity} GB DDR4 · ${speed} MT/s · 已用插槽 ${modules.size}/${boardLayout.dimms}")
     }
     for ((index, slot) in ComputerPart.graphicsSlots.withIndex()) {
-        val part = detected(slot)?.takeIf { graphicsPowered(index) } ?: continue
+        val part = detectedPart(slot)?.takeIf { graphicsPowered(index) } ?: continue
         val graphics = part.product?.graphics
         val vram = if (graphics == null) "" else " · ${graphics.memoryType} ${graphicsMemoryGb(part)} GB"
         add("显示适配器 · PCIe ${index + 1}" to "${part.product?.model ?: slot.label}$vram")

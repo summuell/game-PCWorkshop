@@ -19,24 +19,27 @@ import androidx.compose.ui.unit.dp
 
 private enum class Location(val title: String) {
     Desktop("桌面"), Computer("我的电脑"), Bin("回收站"), System("本地磁盘 (C:)"),
-    Data("本地磁盘 (D:)"), Extra("本地磁盘 (E:)"), ExtraF("本地磁盘 (F:)"), ExtraG("本地磁盘 (G:)"), Usb("移动磁盘 (U:)"), Hardware("配置检测");
+    Data("本地磁盘 (D:)"), Extra("本地磁盘 (E:)"), ExtraF("本地磁盘 (F:)"), ExtraG("本地磁盘 (G:)"),
+    Usb("移动磁盘 (U:)"), Hardware("配置检测"), Benchmark("硬件跑分");
 
     val parent: Location get() = when (this) {
         System, Data, Extra, ExtraF, ExtraG, Usb -> Computer
-        Hardware -> Usb
+        Hardware, Benchmark -> Usb
         else -> Desktop
     }
+
+    val requiresUsb: Boolean get() = this == Usb || parent == Usb
 }
 
 private val WindowFace = Color(0xFF233844)
 private val WindowAccent = Color(0xFF97DDCB)
 
 @Composable
-internal fun ComputerDesktop(session: RepairSession, usb: Boolean) {
+internal fun ComputerDesktop(session: RepairSession, usb: Boolean, paused: Boolean) {
     var page by remember { mutableStateOf(Location.Desktop) }
     var denied by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(usb) {
-        if (!usb && (page == Location.Usb || page == Location.Hardware)) page = Location.Computer
+        if (!usb && page.requiresUsb) page = Location.Computer
     }
     Box(Modifier.fillMaxSize()) {
         DesktopWallpaper()
@@ -81,8 +84,12 @@ internal fun ComputerDesktop(session: RepairSession, usb: Boolean) {
                                 Location.System -> listOf("Windows", "Program Files", "Users").forEach { folder ->
                                     FileRow(null, name = folder) { denied = folder }
                                 }
-                                Location.Usb -> FileRow(Location.Hardware) { page = Location.Hardware }
+                                Location.Usb -> if (usb) {
+                                    FileRow(Location.Hardware) { page = Location.Hardware }
+                                    FileRow(Location.Benchmark) { page = Location.Benchmark }
+                                }
                                 Location.Hardware -> HardwareReport(session)
+                                Location.Benchmark -> if (usb) BenchmarkWindow(session, paused)
                                 Location.Bin, Location.Data, Location.Extra, Location.ExtraF, Location.ExtraG -> Unit
                                 Location.Desktop -> Unit
                             }
@@ -166,6 +173,13 @@ private fun FileIcon(location: Location?, modifier: Modifier) {
             Location.Hardware -> {
                 tile(2,3,12,10,WindowAccent); tile(4,5,8,6,dark)
                 tile(5,8,2,2,WindowAccent); tile(9,6,2,4,WindowAccent)
+            }
+            Location.Benchmark -> {
+                tile(1,2,14,12,WindowAccent)
+                tile(2,3,12,10,dark)
+                tile(4,8,2,3,WindowAccent)
+                tile(7,6,2,5,WindowAccent)
+                tile(10,4,2,7,Amber)
             }
             else -> { tile(1,4,6,3,Amber); tile(1,6,14,7,Amber); tile(2,7,12,1,Color(0xFFFFDBA5)) }
         }

@@ -204,8 +204,10 @@ internal data class RepairSession(
 
     val coolingAvailable: Boolean get() = thermalShutdownMillis == null
 
-    private fun hasWorkingPart(part: ComputerPart): Boolean =
-        assembly.isInstalled(part) && parts[part]?.working == true
+    fun detectedPart(slot: ComputerPart): HardwarePart? =
+        parts[slot]?.takeIf { assembly.isInstalled(slot) && it.working }
+
+    private fun hasWorkingPart(slot: ComputerPart): Boolean = detectedPart(slot) != null
 
     fun save(): List<String> = buildList {
         add("FreeBuild")

@@ -106,7 +106,7 @@ internal class ComputerPower {
     }
 }
 
-private suspend fun gameDelay(milliseconds: Long, paused: androidx.compose.runtime.State<Boolean>) {
+internal suspend fun gameDelay(milliseconds: Long, paused: androidx.compose.runtime.State<Boolean>) {
     var remaining = milliseconds
     while (true) {
         androidx.compose.runtime.snapshotFlow { paused.value }.first { !it }
@@ -170,10 +170,10 @@ internal fun RunComputer(power: ComputerPower, session: RepairSession, paused: B
 }
 
 @Composable
-internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClose: () -> Unit) {
+internal fun StartupMonitor(power: ComputerPower, session: RepairSession, paused: Boolean, onClose: () -> Unit) {
     val hasChassis = session.chassis != null
     Row(Modifier.fillMaxSize().background(Background)) {
-        Monitor(power, session, Modifier.weight(1f).fillMaxHeight().padding(8.dp))
+        Monitor(power, session, paused, Modifier.weight(1f).fillMaxHeight().padding(8.dp))
         WorkshopControlRail("工作台", onClose) {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -201,7 +201,7 @@ internal fun StartupMonitor(power: ComputerPower, session: RepairSession, onClos
 }
 
 @Composable
-private fun Monitor(power: ComputerPower, session: RepairSession, modifier: Modifier) {
+private fun Monitor(power: ComputerPower, session: RepairSession, paused: Boolean, modifier: Modifier) {
     Column(modifier.background(MonitorFrame).border(2.dp, MonitorEdge).padding(5.dp)) {
         Box(Modifier.weight(1f).fillMaxWidth().background(MonitorGlass).clipToBounds(), contentAlignment=Alignment.Center) {
             when {
@@ -217,7 +217,7 @@ private fun Monitor(power: ComputerPower, session: RepairSession, modifier: Modi
                 power.stalled -> GameText(if (power.stage == StartupStage.BootDrive) "找不到启动设备" else "无信号", color=MutedText)
                 power.stage == StartupStage.SystemLoading -> SystemLoading()
                 power.stage == StartupStage.Welcome -> GameText("欢迎",fontSize=22)
-                power.stage == StartupStage.Desktop -> ComputerDesktop(session,power.usb)
+                power.stage == StartupStage.Desktop -> ComputerDesktop(session, power.usb, paused)
             }
         }
         Box(Modifier.fillMaxWidth().height(6.dp),contentAlignment=Alignment.CenterEnd) {
